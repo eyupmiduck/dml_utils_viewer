@@ -1,0 +1,307 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --border: #d8dee6;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --danger: #b42318;
+  --ok: #1a7f37;
+  --warn: #b54708;
+  --shadow: 0 1px 2px rgb(27 31 36 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #4493f8;
+    --accent-text: #0d1117;
+    --danger: #f85149;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --shadow: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Keep the hidden attribute working even for elements whose class sets a
+   display value (for example the flex lock banner). */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.subtitle {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 1rem;
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.filters label,
+.pager-controls label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.filters-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.filters button[type='submit'],
+#unlock {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+button.ghost {
+  background: transparent;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+th[data-sort]::after {
+  content: '';
+}
+
+th[aria-sort='ascending']::after {
+  content: ' ▲';
+}
+
+th[aria-sort='descending']::after {
+  content: ' ▼';
+}
+
+td.num {
+  text-align: right;
+  color: var(--muted);
+}
+
+td.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.badge.EXECUTED {
+  color: var(--ok);
+  border-color: currentcolor;
+}
+
+.badge.FAILED {
+  color: var(--danger);
+  border-color: currentcolor;
+}
+
+.badge.RERAN {
+  color: var(--warn);
+  border-color: currentcolor;
+}
+
+tr:hover td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.empty {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+}
+
+/* A fixed toast so an error is visible without scrolling to the end of the
+   page (the target form and the changelog table can both be long). */
+.error {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: min(90vw, 640px);
+  margin: 0;
+  padding: 0.6rem 0.75rem 0.6rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  color: var(--danger);
+}
+
+.error button {
+  padding: 0 0.25rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.pager-controls {
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.page-label {
+  color: var(--muted);
+  align-self: center;
+}
+
+.summary {
+  color: var(--muted);
+}
+
+.lock {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.lock.locked .dot {
+  background: var(--danger);
+}

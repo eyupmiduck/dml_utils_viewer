@@ -1,0 +1,10 @@
+node_modules/
+package-lock.json
+coverage/
+.beads/
+.agents/
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md
+.idea/
