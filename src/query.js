@@ -1,5 +1,13 @@
 import { qualifyName } from './identifiers.js';
-import { TABLES } from './target.js';
+
+// The migration tables live together in one schema and their names are fixed by
+// the dml_utils_data schema, so only the schema name is configurable, and only
+// through the configuration file.
+export const TABLES = Object.freeze({
+  run: 'migration_run',
+  boundary: 'migration_boundary',
+  error: 'migration_error',
+});
 
 /** migration_run columns returned to the UI, in display order. */
 export const RUN_COLUMNS = [
@@ -77,12 +85,11 @@ function asFilterString(value) {
  * schema/table names are interpolated.
  *
  * @param {object} config the application configuration
- * @param {{schema: string}} target the schema holding the tables
  * @param {object} [params] pagination, sorting and filter values
  * @returns {{rowsSql: string, countSql: string, rowsValues: unknown[], countValues: unknown[], page: number, pageSize: number, sort: string, dir: string}} the queries and resolved parameters
  */
-export function buildRunsQuery(config, target, params = {}) {
-  const table = qualifyName(target.schema, TABLES.run);
+export function buildRunsQuery(config, params = {}) {
+  const table = qualifyName(config.schema, TABLES.run);
   const filters = params.filters ?? {};
 
   const where = [];
@@ -177,13 +184,12 @@ const ERROR_SORT_COLUMNS = new Set(['error_id', 'run_id', 'boundary_no', 'create
  * Builds the paginated boundaries query for one run.
  *
  * @param {object} config the application configuration
- * @param {{schema: string}} target the schema holding the tables
  * @param {string} runId the run id (a digit string, bound as a bigint)
  * @param {object} [params] pagination and filter values
  * @returns {{rowsSql: string, countSql: string, rowsValues: unknown[], countValues: unknown[], page: number, pageSize: number}} the queries and resolved parameters
  */
-export function buildBoundariesQuery(config, target, runId, params = {}) {
-  const table = qualifyName(target.schema, TABLES.boundary);
+export function buildBoundariesQuery(config, runId, params = {}) {
+  const table = qualifyName(config.schema, TABLES.boundary);
   const where = ['run_id = $1'];
   const countValues = [runId];
 
@@ -211,13 +217,12 @@ export function buildBoundariesQuery(config, target, runId, params = {}) {
  * errors; without, it is every recorded error.
  *
  * @param {object} config the application configuration
- * @param {{schema: string}} target the schema holding the tables
  * @param {object} [params] pagination, sorting and filter values
  * @returns {{rowsSql: string, countSql: string, rowsValues: unknown[], countValues: unknown[], page: number, pageSize: number, sort: string, dir: string}} the queries and resolved parameters
  */
-export function buildErrorsQuery(config, target, params = {}) {
-  const errorTable = qualifyName(target.schema, TABLES.error);
-  const runTable = qualifyName(target.schema, TABLES.run);
+export function buildErrorsQuery(config, params = {}) {
+  const errorTable = qualifyName(config.schema, TABLES.error);
+  const runTable = qualifyName(config.schema, TABLES.run);
   const filters = params.filters ?? {};
 
   const where = [];

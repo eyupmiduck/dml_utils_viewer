@@ -5,8 +5,7 @@ import express from 'express';
 
 import { ConfigError, loadConfig, parseArgs } from './config.js';
 import { createPool } from './db.js';
-import { listRuns, getRun, listBoundaries, listErrors } from './repository.js';
-import { resolveTarget, TargetError } from './target.js';
+import { getRun, listBoundaries, listErrors, listRuns } from './repository.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,19 +25,9 @@ function publicConfig(config) {
     // The UI only needs a display label, so keep the raw connection
     // coordinates server-side.
     connection: `${config.database.user}@${config.database.host}:${config.database.port}/${config.database.name}`,
-    // Default for the editable schema input.
     schema: config.schema,
     server: { pageSize: config.server.pageSize, maxPageSize: config.server.maxPageSize },
   };
-}
-
-// Answers 400 for a bad schema and reports whether it handled the error.
-function sendTargetError(error, response) {
-  if (error instanceof TargetError) {
-    response.status(400).json({ error: error.message });
-    return true;
-  }
-  return false;
 }
 
 function parseRunsParams(query) {
@@ -111,10 +100,8 @@ function createApp(config, pool) {
 
   app.get('/api/runs', async (request, response, next) => {
     try {
-      const target = resolveTarget(config, request.query);
-      response.json(await listRuns(pool, config, target, parseRunsParams(request.query)));
+      response.json(await listRuns(pool, config, parseRunsParams(request.query)));
     } catch (error) {
-      if (sendTargetError(error, response)) return;
       next(error);
     }
   });
@@ -123,15 +110,13 @@ function createApp(config, pool) {
     const runId = parseRunId(request.params.id, response);
     if (runId === null) return;
     try {
-      const target = resolveTarget(config, request.query);
-      const result = await getRun(pool, target, runId);
+      const result = await getRun(pool, config, runId);
       if (result === null) {
         response.status(404).json({ error: `Run ${runId} not found.` });
         return;
       }
       response.json(result);
     } catch (error) {
-      if (sendTargetError(error, response)) return;
       next(error);
     }
   });
@@ -140,12 +125,8 @@ function createApp(config, pool) {
     const runId = parseRunId(request.params.id, response);
     if (runId === null) return;
     try {
-      const target = resolveTarget(config, request.query);
-      response.json(
-        await listBoundaries(pool, config, target, runId, parseBoundaryParams(request.query)),
-      );
+      response.json(await listBoundaries(pool, config, runId, parseBoundaryParams(request.query)));
     } catch (error) {
-      if (sendTargetError(error, response)) return;
       next(error);
     }
   });
@@ -154,32 +135,31 @@ function createApp(config, pool) {
     const runId = parseRunId(request.params.id, response);
     if (runId === null) return;
     try {
-      const target = resolveTarget(config, request.query);
       const params = parseErrorParams(request.query);
       params.filters.run_id = runId;
-      response.json(await listErrors(pool, config, target, params));
+      response.json(await listErrors(pool, config, params));
     } catch (error) {
-      if (sendTargetError(error, response)) return;
       next(error);
     }
   });
 
   app.get('/api/errors', async (request, response, next) => {
     try {
-      const target = resolveTarget(config, request.query);
-      response.json(await listErrors(pool, config, target, parseErrorParams(request.query)));
+      response.json(await listErrors(pool, config, parseErrorParams(request.query)));
     } catch (error) {
-      if (sendTargetError(error, response)) return;
       next(error);
     }
   });
 
   // Express needs four arguments to treat this as error middleware.
   app.use((error, request, response, _next) => {
-    // A schema that does not exist is a client mistake, not a server fault:
-    // 3F000 = invalid_schema_name, 42P01 = undefined_table.
+    // The configured schema does not exist: a configuration mistake, reported
+    // as not found rather than a server fault. 3F000 = invalid_schema_name,
+    // 42P01 = undefined_table.
     if (error?.code === '3F000' || error?.code === '42P01') {
-      response.status(404).json({ error: 'Schema not found: check the schema name.' });
+      response
+        .status(404)
+        .json({ error: 'The migration schema was not found; check the configuration.' });
       return;
     }
     console.error(error);

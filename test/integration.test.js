@@ -4,7 +4,6 @@ import test from 'node:test';
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/db.js';
 import { getRun, listBoundaries, listErrors, listRuns } from '../src/repository.js';
-import { resolveTarget } from '../src/target.js';
 
 // These tests need a real database (the local dml_utils one by default). They
 // are skipped unless the password environment variable is set.
@@ -16,20 +15,20 @@ async function withPool(run) {
   const config = loadConfig();
   const pool = createPool(config);
   try {
-    await run(config, pool, resolveTarget(config, {}));
+    await run(config, pool);
   } finally {
     await pool.end();
   }
 }
 
-async function firstRunId(config, pool, target) {
-  const page = await listRuns(pool, config, target, { page: 1, pageSize: 1 });
+async function firstRunId(config, pool) {
+  const page = await listRuns(pool, config, { page: 1, pageSize: 1 });
   return page.rows.length > 0 ? page.rows[0].run_id : null;
 }
 
 test('lists a page of runs with a derived state', { skip }, async () => {
-  await withPool(async (config, pool, target) => {
-    const page = await listRuns(pool, config, target, { page: 1, pageSize: 5 });
+  await withPool(async (config, pool) => {
+    const page = await listRuns(pool, config, { page: 1, pageSize: 5 });
 
     assert.equal(page.page, 1);
     assert.equal(page.pageSize, 5);
@@ -43,8 +42,8 @@ test('lists a page of runs with a derived state', { skip }, async () => {
 });
 
 test('filters runs by state', { skip }, async () => {
-  await withPool(async (config, pool, target) => {
-    const page = await listRuns(pool, config, target, {
+  await withPool(async (config, pool) => {
+    const page = await listRuns(pool, config, {
       pageSize: 100,
       filters: { state: 'completed' },
     });
@@ -54,27 +53,27 @@ test('filters runs by state', { skip }, async () => {
 });
 
 test('reads a run with its counts, and null for a missing run', { skip }, async () => {
-  await withPool(async (config, pool, target) => {
-    const runId = await firstRunId(config, pool, target);
+  await withPool(async (config, pool) => {
+    const runId = await firstRunId(config, pool);
     if (runId === null) return; // empty database
 
-    const detail = await getRun(pool, target, runId);
+    const detail = await getRun(pool, config, runId);
     assert.equal(detail.run.run_id, runId);
     assert.ok(STATES.includes(detail.run.state));
     assert.ok(detail.counts.boundaries >= 0);
     assert.ok(detail.counts.boundaries_completed >= 0);
     assert.ok(detail.counts.errors >= 0);
 
-    assert.equal(await getRun(pool, target, '999999999999'), null);
+    assert.equal(await getRun(pool, config, '999999999999'), null);
   });
 });
 
 test("lists a page of a run's boundaries", { skip }, async () => {
-  await withPool(async (config, pool, target) => {
-    const runId = await firstRunId(config, pool, target);
+  await withPool(async (config, pool) => {
+    const runId = await firstRunId(config, pool);
     if (runId === null) return;
 
-    const page = await listBoundaries(pool, config, target, runId, { page: 1, pageSize: 5 });
+    const page = await listBoundaries(pool, config, runId, { page: 1, pageSize: 5 });
 
     assert.ok(page.total >= page.rows.length);
     assert.ok(page.completed >= 0);
@@ -88,8 +87,8 @@ test("lists a page of a run's boundaries", { skip }, async () => {
 });
 
 test('lists errors across runs', { skip }, async () => {
-  await withPool(async (config, pool, target) => {
-    const page = await listErrors(pool, config, target, { page: 1, pageSize: 5 });
+  await withPool(async (config, pool) => {
+    const page = await listErrors(pool, config, { page: 1, pageSize: 5 });
 
     assert.ok(page.total >= page.rows.length);
     for (const row of page.rows) {

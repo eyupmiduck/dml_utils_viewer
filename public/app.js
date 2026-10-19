@@ -9,9 +9,6 @@ const API = {
 };
 
 const state = {
-  connection: '',
-  schema: '',
-  defaults: { schema: '' },
   maxPageSize: 200,
   runs: { page: 1, pageSize: 25, sort: 'run_id', dir: 'desc', pages: 1, total: 0, filters: {} },
   boundaries: { page: 1, pageSize: 25 },
@@ -21,9 +18,6 @@ const state = {
 const elements = {
   target: document.getElementById('target'),
   nav: document.getElementById('nav'),
-  targetForm: document.getElementById('target-form'),
-  targetReset: document.getElementById('target-reset'),
-  schemaInput: document.querySelector('#target-form input[name="schema"]'),
   view: document.getElementById('view'),
   error: document.getElementById('error'),
   errorText: document.getElementById('error-text'),
@@ -226,7 +220,6 @@ function sortableHeader(label, column, runs, reload, className) {
 async function renderRuns() {
   const runs = state.runs;
   const params = new URLSearchParams({
-    schema: state.schema,
     page: String(runs.page),
     pageSize: String(runs.pageSize),
     sort: runs.sort,
@@ -384,14 +377,11 @@ function detailList(pairs) {
 }
 
 async function renderRunDetail(id) {
-  const schema = encodeURIComponent(state.schema);
   const boundaries = state.boundaries;
   const [detail, boundaryPage, errorPage] = await Promise.all([
-    api(`${API.runs}/${id}?schema=${schema}`),
-    api(
-      `${API.runs}/${id}/boundaries?schema=${schema}&page=${boundaries.page}&pageSize=${boundaries.pageSize}`,
-    ),
-    api(`${API.runs}/${id}/errors?schema=${schema}&pageSize=${state.maxPageSize}`),
+    api(`${API.runs}/${id}`),
+    api(`${API.runs}/${id}/boundaries?page=${boundaries.page}&pageSize=${boundaries.pageSize}`),
+    api(`${API.runs}/${id}/errors?pageSize=${state.maxPageSize}`),
   ]);
 
   const { run, counts } = detail;
@@ -478,7 +468,6 @@ async function renderRunsView(rest) {
 async function renderErrors() {
   const errors = state.errors;
   const params = new URLSearchParams({
-    schema: state.schema,
     page: String(errors.page),
     pageSize: String(errors.pageSize),
     sort: errors.sort,
@@ -617,32 +606,10 @@ async function render() {
 
 async function loadConfig() {
   const config = await api(API.config);
-  state.connection = config.connection;
-  state.defaults = { schema: config.schema };
-  state.schema = config.schema;
   state.runs.pageSize = config.server.pageSize;
   state.maxPageSize = config.server.maxPageSize;
-  elements.schemaInput.value = config.schema;
   elements.target.textContent = `${config.connection} · ${config.schema}`;
 }
-
-elements.targetForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const schema = elements.schemaInput.value.trim();
-  if (schema === '') return;
-  state.schema = schema;
-  state.runs.page = 1;
-  elements.target.textContent = `${state.connection} · ${schema}`;
-  render();
-});
-
-elements.targetReset.addEventListener('click', () => {
-  state.schema = state.defaults.schema;
-  state.runs.page = 1;
-  elements.schemaInput.value = state.defaults.schema;
-  elements.target.textContent = `${state.connection} · ${state.defaults.schema}`;
-  render();
-});
 
 elements.errorClose.addEventListener('click', clearError);
 window.addEventListener('hashchange', render);

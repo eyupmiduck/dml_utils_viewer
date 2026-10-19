@@ -9,10 +9,8 @@ import {
   RUN_COLUMNS,
 } from '../src/query.js';
 
-const TARGET = { schema: 'dml_utils_data' };
-
 test('builds the default query from the configured schema', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET);
+  const query = buildRunsQuery(DEFAULT_CONFIG);
 
   assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_run"/);
   assert.match(query.rowsSql, /ORDER BY run_id DESC, run_id DESC/);
@@ -30,16 +28,14 @@ test('builds the default query from the configured schema', () => {
 });
 
 test('filters by label as a contains match', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, {
-    filters: { label: 'nightly' },
-  });
+  const query = buildRunsQuery(DEFAULT_CONFIG, { filters: { label: 'nightly' } });
 
   assert.match(query.rowsSql, /WHERE label ILIKE \$1/);
   assert.deepEqual(query.countValues, ['%nightly%']);
 });
 
 test('filters by chunk_by and state', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, {
+  const query = buildRunsQuery(DEFAULT_CONFIG, {
     filters: { chunk_by: 'blocks', state: 'running' },
   });
 
@@ -52,7 +48,7 @@ test('filters by chunk_by and state', () => {
 });
 
 test('ignores an unknown chunk_by and the all state', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, {
+  const query = buildRunsQuery(DEFAULT_CONFIG, {
     filters: { chunk_by: 'nonsense', state: 'all' },
   });
 
@@ -62,7 +58,7 @@ test('ignores an unknown chunk_by and the all state', () => {
 });
 
 test('filters a created_at range, including the whole end day', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, {
+  const query = buildRunsQuery(DEFAULT_CONFIG, {
     filters: { from: '2026-01-01', to: '2026-01-31' },
   });
 
@@ -72,7 +68,7 @@ test('filters a created_at range, including the whole end day', () => {
 });
 
 test('paginates with a bounded page size', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, { page: '3', pageSize: '1000' });
+  const query = buildRunsQuery(DEFAULT_CONFIG, { page: '3', pageSize: '1000' });
 
   assert.equal(query.page, 3);
   assert.equal(query.pageSize, DEFAULT_CONFIG.server.maxPageSize);
@@ -80,10 +76,7 @@ test('paginates with a bounded page size', () => {
 });
 
 test('only allows a known sort column and direction', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, {
-    sort: 'label; drop table x',
-    dir: 'sideways',
-  });
+  const query = buildRunsQuery(DEFAULT_CONFIG, { sort: 'label; drop table x', dir: 'sideways' });
 
   assert.equal(query.sort, 'run_id');
   assert.equal(query.dir, 'DESC');
@@ -91,7 +84,7 @@ test('only allows a known sort column and direction', () => {
 });
 
 test('sorts ascending on request', () => {
-  const query = buildRunsQuery(DEFAULT_CONFIG, TARGET, { sort: 'created_at', dir: 'asc' });
+  const query = buildRunsQuery(DEFAULT_CONFIG, { sort: 'created_at', dir: 'asc' });
 
   assert.equal(query.sort, 'created_at');
   assert.equal(query.dir, 'ASC');
@@ -99,7 +92,7 @@ test('sorts ascending on request', () => {
 });
 
 test('builds the boundaries query for a run with a state filter', () => {
-  const query = buildBoundariesQuery(DEFAULT_CONFIG, TARGET, '42', {
+  const query = buildBoundariesQuery(DEFAULT_CONFIG, '42', {
     filters: { state: 'completed' },
     page: 2,
     pageSize: 10,
@@ -115,7 +108,7 @@ test('builds the boundaries query for a run with a state filter', () => {
 });
 
 test('builds the errors query across runs with filters', () => {
-  const query = buildErrorsQuery(DEFAULT_CONFIG, TARGET, {
+  const query = buildErrorsQuery(DEFAULT_CONFIG, {
     filters: { run_id: '42', sqlstate: '23514', message: 'nope' },
   });
 
@@ -130,7 +123,7 @@ test('builds the errors query across runs with filters', () => {
 });
 
 test('ignores a non-numeric run_id filter', () => {
-  const query = buildErrorsQuery(DEFAULT_CONFIG, TARGET, { filters: { run_id: 'abc' } });
+  const query = buildErrorsQuery(DEFAULT_CONFIG, { filters: { run_id: 'abc' } });
 
   assert.doesNotMatch(query.rowsSql, /e\.run_id =/);
   assert.deepEqual(query.countValues, []);

@@ -11,11 +11,8 @@ PostgreSQL database:
 - **Errors** — every recorded chunk failure (`migration_error`), across runs.
 
 It is **read-only**. The UI is plain HTML/CSS/ES modules — there is no build
-step.
-
-The top of the page has an editable **Schema** field, pre-filled from the
-configuration, so you can point the viewer at a schema other than the default
-`dml_utils_data` without restarting. **Reset** restores the configured default.
+step. The schema it reads is set in the configuration (below); it is not
+changed at runtime.
 
 ## Requirements
 
@@ -88,11 +85,6 @@ VIEWER_DB_PASSWORD=postgres npm test
 ```
 
 ## HTTP API
-
-Every list endpoint accepts an optional `schema` query parameter that overrides
-the configured schema for that request. The name must be a valid SQL identifier
-(it is quoted, never bound), so an invalid name is a `400` and a missing schema
-is a `404`.
 
 | Method | Path                       | Description                                             |
 | ------ | -------------------------- | ------------------------------------------------------- |
