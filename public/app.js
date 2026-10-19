@@ -11,7 +11,7 @@ const API = {
 const state = {
   maxPageSize: 200,
   runs: { page: 1, pageSize: 25, sort: 'run_id', dir: 'desc', pages: 1, total: 0, filters: {} },
-  boundaries: { page: 1, pageSize: 25 },
+  boundaries: { runId: null, page: 1, pageSize: 25 },
   errors: { page: 1, pageSize: 25, sort: 'error_id', dir: 'desc', pages: 1, total: 0, filters: {} },
 };
 
@@ -142,12 +142,12 @@ function pager(result, onChange) {
 
   const size = select(
     'pageSize',
-    [
-      ['10', '10'],
-      ['25', '25'],
-      ['50', '50'],
-      ['100', '100'],
-    ],
+    (() => {
+      const options = ['10', '25', '50', '100'];
+      const current = String(result.pageSize);
+      if (!options.includes(current)) options.unshift(current);
+      return options.map((value) => [value, value]);
+    })(),
     String(result.pageSize),
   );
   size.addEventListener('change', () => onChange(1, Number(size.value)));
@@ -204,26 +204,37 @@ function table(headers, rows) {
 }
 
 function sortableHeader(label, column, runs, reload, className) {
+  const applySort = () => {
+    if (runs.sort === column) {
+      runs.dir = runs.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      runs.sort = column;
+      runs.dir = 'desc';
+    }
+    runs.page = 1;
+    reload();
+  };
   const th = el('th', {
     class: className,
     'data-sort': column,
+    role: 'button',
+    tabindex: '0',
     text: label,
-    onclick: () => {
-      if (runs.sort === column) {
-        runs.dir = runs.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        runs.sort = column;
-        runs.dir = 'desc';
+    onclick: applySort,
+    onkeydown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        applySort();
       }
-      runs.page = 1;
-      reload();
     },
   });
-  if (runs.sort === column) th.classList.add(runs.dir);
+  if (runs.sort === column) {
+    th.setAttribute('aria-sort', runs.dir === 'asc' ? 'ascending' : 'descending');
+  }
   return { node: th };
 }
 
-async function renderRuns() {
+async function renderRuns(token) {
   const runs = state.runs;
   const params = new URLSearchParams({
     page: String(runs.page),
@@ -241,7 +252,7 @@ async function renderRuns() {
   runs.pages = result.pages;
   runs.total = result.total;
 
-  const reload = () => renderRuns().catch(showError);
+  const reload = () => renderRuns(token).then(clearError).catch(showError);
   const onChange = (page, pageSize) => {
     runs.page = Math.min(Math.max(1, page), runs.pages);
     if (pageSize) runs.pageSize = pageSize;
@@ -321,8 +332,8 @@ async function renderRuns() {
     sortableHeader('Run', 'run_id', runs, reload, 'num'),
     sortableHeader('Label', 'label', runs, reload),
     'Strategy',
-    'Size',
-    'Threads',
+    { node: el('th', { class: 'num', text: 'Size' }) },
+    { node: el('th', { class: 'num', text: 'Threads' }) },
     'Driving table',
     sortableHeader('Progress', 'total_chunks_completed', runs, reload),
     'State',
@@ -357,6 +368,7 @@ async function renderRuns() {
     pager(result, onChange),
   ]);
 
+  if (token !== renderToken) return;
   elements.view.replaceChildren(panel);
 }
 
@@ -382,7 +394,13 @@ function detailList(pairs) {
   return list;
 }
 
-async function renderRunDetail(id) {
+async function renderRunDetail(id, token) {
+  // Reset the boundary pager when switching to another run, so a page that was
+  // valid for the previous run cannot carry over.
+  if (state.boundaries.runId !== id) {
+    state.boundaries.runId = id;
+    state.boundaries.page = 1;
+  }
   const boundaries = state.boundaries;
   const [detail, boundaryPage, errorPage] = await Promise.all([
     api(`${API.runs}/${id}`),
@@ -391,7 +409,7 @@ async function renderRunDetail(id) {
   ]);
 
   const { run, counts } = detail;
-  const reload = () => renderRunDetail(id).catch(showError);
+  const reload = () => renderRunDetail(id, token).then(clearError).catch(showError);
 
   const summary = el('section', { class: 'panel' }, [
     el('p', {}, [el('a', { class: 'run-link', href: '#/runs', text: '← Runs' })]),
@@ -455,23 +473,32 @@ async function renderRunDetail(id) {
     el('h3', { class: 'section-title', text: `Errors (${errorPage.total})` }),
     errorPage.total === 0
       ? el('p', { class: 'empty', text: 'No errors recorded for this run.' })
-      : el('div', { class: 'table-wrap' }, [
-          table(['Error', 'Boundary', 'SQLSTATE', 'Message', 'Created'], errorRows),
+      : el('div', {}, [
+          el('div', { class: 'table-wrap' }, [
+            table(['Error', 'Boundary', 'SQLSTATE', 'Message', 'Created'], errorRows),
+          ]),
+          errorPage.total > errorPage.rows.length
+            ? el('p', {
+                class: 'empty',
+                text: `Showing the first ${errorPage.rows.length} of ${errorPage.total} errors; see the Errors screen for the rest.`,
+              })
+            : '',
         ]),
   ]);
 
+  if (token !== renderToken) return;
   elements.view.replaceChildren(summary, boundariesSection, errorsSection);
 }
 
-async function renderRunsView(rest) {
+async function renderRunsView(rest, token) {
   if (rest.length > 0) {
-    await renderRunDetail(rest[0]);
+    await renderRunDetail(rest[0], token);
     return;
   }
-  await renderRuns();
+  await renderRuns(token);
 }
 
-async function renderErrors() {
+async function renderErrors(token) {
   const errors = state.errors;
   const params = new URLSearchParams({
     page: String(errors.page),
@@ -489,7 +516,7 @@ async function renderErrors() {
   errors.pages = result.pages;
   errors.total = result.total;
 
-  const reload = () => renderErrors().catch(showError);
+  const reload = () => renderErrors(token).then(clearError).catch(showError);
   const onChange = (page, pageSize) => {
     errors.page = Math.min(Math.max(1, page), errors.pages);
     if (pageSize) errors.pageSize = pageSize;
@@ -502,6 +529,9 @@ async function renderErrors() {
       el('input', {
         name: 'run_id',
         type: 'text',
+        inputmode: 'numeric',
+        pattern: '\\d*',
+        title: 'Run id must be digits',
         placeholder: 'exact',
         value: errors.filters.run_id ?? '',
       }),
@@ -553,6 +583,10 @@ async function renderErrors() {
       from: data.get('from'),
       to: data.get('to'),
     };
+    if (errors.filters.run_id !== '' && !/^\d+$/.test(errors.filters.run_id)) {
+      showError(new Error('Run id must be digits.'));
+      return;
+    }
     errors.page = 1;
     reload();
   });
@@ -589,6 +623,7 @@ async function renderErrors() {
     pager(result, onChange),
   ]);
 
+  if (token !== renderToken) return;
   elements.view.replaceChildren(panel);
 }
 
@@ -598,15 +633,20 @@ const views = {
   errors: renderErrors,
 };
 
+// Incremented on every render so a slower, older response cannot replace a
+// newer screen.
+let renderToken = 0;
+
 async function render() {
+  const token = (renderToken += 1);
   clearError();
   const [name = 'runs', ...rest] = currentRoute();
   const view = views[name] ?? views.runs;
   setActiveNav(views[name] ? name : 'runs');
   try {
-    await view(rest);
+    await view(rest, token);
   } catch (error) {
-    showError(error);
+    if (token === renderToken) showError(error);
   }
 }
 
@@ -621,8 +661,15 @@ elements.errorClose.addEventListener('click', clearError);
 window.addEventListener('hashchange', render);
 
 async function main() {
-  await loadConfig();
+  // A failed config still renders with the built-in defaults, so the screen is
+  // never left permanently empty; the error is shown after the render (which
+  // clears the toast).
+  const configError = await loadConfig().then(
+    () => null,
+    (error) => error,
+  );
   await render();
+  if (configError) showError(configError);
 }
 
 main().catch((error) => showError(error));

@@ -28,6 +28,10 @@ export const RUN_COLUMNS = [
   'archived_at',
 ];
 
+// The run detail additionally returns the (potentially large) SQL text and the
+// block-chunking filepath, which the list does not need.
+export const RUN_DETAIL_COLUMNS = [...RUN_COLUMNS, 'sql_text', 'driving_table_relation_filepath'];
+
 // The run's derived state, from its timestamps. Archived wins, then completed,
 // then a run that has started, otherwise it is still pending.
 export const RUN_STATE_EXPRESSION = `CASE

@@ -83,6 +83,12 @@ main {
   gap: 1rem;
 }
 
+/* The screens render their panels here, so the spacing belongs on #view. */
+#view {
+  display: grid;
+  gap: 1rem;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -135,8 +141,7 @@ button:disabled {
   cursor: default;
 }
 
-.filters button[type='submit'],
-#unlock {
+.filters button[type='submit'] {
   background: var(--accent);
   color: var(--accent-text);
   border-color: var(--accent);
@@ -181,17 +186,20 @@ th[data-sort] {
 
 th[data-sort]::after {
   content: '';
+  margin-left: 0.3rem;
+  color: var(--muted);
 }
 
-th[aria-sort='ascending']::after {
-  content: ' ▲';
+th[data-sort][aria-sort='ascending']::after {
+  content: '▲';
 }
 
-th[aria-sort='descending']::after {
-  content: ' ▼';
+th[data-sort][aria-sort='descending']::after {
+  content: '▼';
 }
 
-td.num {
+td.num,
+th.num {
   text-align: right;
   color: var(--muted);
 }
@@ -207,21 +215,6 @@ td.mono {
   border: 1px solid var(--border);
   font-size: 0.72rem;
   text-transform: uppercase;
-}
-
-.badge.EXECUTED {
-  color: var(--ok);
-  border-color: currentcolor;
-}
-
-.badge.FAILED {
-  color: var(--danger);
-  border-color: currentcolor;
-}
-
-.badge.RERAN {
-  color: var(--warn);
-  border-color: currentcolor;
 }
 
 tr:hover td {
@@ -286,24 +279,6 @@ tr:hover td {
 
 .summary {
   color: var(--muted);
-}
-
-.lock {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
-
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--ok);
-}
-
-.lock.locked .dot {
-  background: var(--danger);
 }
 
 /* --- dml_utils viewer additions --- */
@@ -391,25 +366,6 @@ tr:hover td {
   text-decoration: underline;
 }
 
-th[data-sort] {
-  cursor: pointer;
-  user-select: none;
-}
-
-th[data-sort]::after {
-  content: '';
-  margin-left: 0.3rem;
-  color: var(--muted);
-}
-
-th[data-sort].asc::after {
-  content: '▲';
-}
-
-th[data-sort].desc::after {
-  content: '▼';
-}
-
 .section-title {
   margin: 0 0 0.5rem;
   font-size: 0.95rem;
@@ -444,8 +400,4 @@ th[data-sort].desc::after {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
   white-space: pre-wrap;
-}
-
-.muted {
-  color: var(--muted);
 }

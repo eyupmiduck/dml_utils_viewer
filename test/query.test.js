@@ -7,7 +7,16 @@ import {
   buildErrorsQuery,
   buildRunsQuery,
   RUN_COLUMNS,
+  RUN_DETAIL_COLUMNS,
 } from '../src/query.js';
+
+test('the run detail adds the sql text and relation filepath to the list columns', () => {
+  assert.ok(RUN_DETAIL_COLUMNS.includes('sql_text'));
+  assert.ok(RUN_DETAIL_COLUMNS.includes('driving_table_relation_filepath'));
+  for (const column of RUN_COLUMNS) {
+    assert.ok(RUN_DETAIL_COLUMNS.includes(column));
+  }
+});
 
 test('builds the default query from the configured schema', () => {
   const query = buildRunsQuery(DEFAULT_CONFIG);

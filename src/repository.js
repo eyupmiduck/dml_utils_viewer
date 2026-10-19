@@ -3,7 +3,7 @@ import {
   buildBoundariesQuery,
   buildErrorsQuery,
   buildRunsQuery,
-  RUN_COLUMNS,
+  RUN_DETAIL_COLUMNS,
   RUN_STATE_EXPRESSION,
   TABLES,
 } from './query.js';
@@ -52,7 +52,7 @@ export async function getRun(pool, config, runId) {
   const errorTable = qualifyName(config.schema, TABLES.error);
 
   const runResult = await pool.query(
-    `SELECT ${RUN_COLUMNS.join(', ')}, ${RUN_STATE_EXPRESSION} FROM ${runTable} WHERE run_id = $1`,
+    `SELECT ${RUN_DETAIL_COLUMNS.join(', ')}, ${RUN_STATE_EXPRESSION} FROM ${runTable} WHERE run_id = $1`,
     [runId],
   );
   if (runResult.rows.length === 0) {
