@@ -72,6 +72,7 @@ function parseErrorParams(query) {
     sort: query.sort,
     dir: query.dir,
     filters: {
+      run_id: query.run_id,
       sqlstate: query.sqlstate,
       message: query.message,
       from: query.from,
@@ -157,6 +158,16 @@ function createApp(config, pool) {
       const params = parseErrorParams(request.query);
       params.filters.run_id = runId;
       response.json(await listErrors(pool, config, target, params));
+    } catch (error) {
+      if (sendTargetError(error, response)) return;
+      next(error);
+    }
+  });
+
+  app.get('/api/errors', async (request, response, next) => {
+    try {
+      const target = resolveTarget(config, request.query);
+      response.json(await listErrors(pool, config, target, parseErrorParams(request.query)));
     } catch (error) {
       if (sendTargetError(error, response)) return;
       next(error);

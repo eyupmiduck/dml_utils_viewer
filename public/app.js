@@ -5,6 +5,7 @@
 const API = {
   config: '/api/config',
   runs: '/api/runs',
+  errors: '/api/errors',
 };
 
 const state = {
@@ -14,6 +15,7 @@ const state = {
   maxPageSize: 200,
   runs: { page: 1, pageSize: 25, sort: 'run_id', dir: 'desc', pages: 1, total: 0, filters: {} },
   boundaries: { page: 1, pageSize: 25 },
+  errors: { page: 1, pageSize: 25, sort: 'error_id', dir: 'desc', pages: 1, total: 0, filters: {} },
 };
 
 const elements = {
@@ -473,9 +475,132 @@ async function renderRunsView(rest) {
   await renderRuns();
 }
 
+async function renderErrors() {
+  const errors = state.errors;
+  const params = new URLSearchParams({
+    schema: state.schema,
+    page: String(errors.page),
+    pageSize: String(errors.pageSize),
+    sort: errors.sort,
+    dir: errors.dir,
+  });
+  for (const [key, value] of Object.entries(errors.filters)) {
+    if (value) params.set(key, value);
+  }
+
+  const result = await api(`${API.errors}?${params}`);
+  errors.page = result.page;
+  errors.pageSize = result.pageSize;
+  errors.pages = result.pages;
+  errors.total = result.total;
+
+  const reload = () => renderErrors().catch(showError);
+  const onChange = (page, pageSize) => {
+    errors.page = Math.min(Math.max(1, page), errors.pages);
+    if (pageSize) errors.pageSize = pageSize;
+    reload();
+  };
+
+  const filters = el('form', { class: 'filters', autocomplete: 'off' }, [
+    field(
+      'Run id',
+      el('input', {
+        name: 'run_id',
+        type: 'text',
+        placeholder: 'exact',
+        value: errors.filters.run_id ?? '',
+      }),
+    ),
+    field(
+      'SQLSTATE',
+      el('input', {
+        name: 'sqlstate',
+        type: 'text',
+        placeholder: 'contains',
+        value: errors.filters.sqlstate ?? '',
+      }),
+    ),
+    field(
+      'Message',
+      el('input', {
+        name: 'message',
+        type: 'text',
+        placeholder: 'contains',
+        value: errors.filters.message ?? '',
+      }),
+    ),
+    field(
+      'Created from',
+      el('input', { name: 'from', type: 'date', value: errors.filters.from ?? '' }),
+    ),
+    field('Created to', el('input', { name: 'to', type: 'date', value: errors.filters.to ?? '' })),
+    el('div', { class: 'filters-actions' }, [
+      el('button', { type: 'submit', text: 'Apply' }),
+      el('button', {
+        type: 'button',
+        class: 'ghost',
+        text: 'Clear',
+        onclick: () => {
+          errors.filters = {};
+          errors.page = 1;
+          reload();
+        },
+      }),
+    ]),
+  ]);
+  filters.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(filters);
+    errors.filters = {
+      run_id: data.get('run_id').trim(),
+      sqlstate: data.get('sqlstate').trim(),
+      message: data.get('message').trim(),
+      from: data.get('from'),
+      to: data.get('to'),
+    };
+    errors.page = 1;
+    reload();
+  });
+
+  const headers = [
+    sortableHeader('Error', 'error_id', errors, reload, 'num'),
+    sortableHeader('Run', 'run_id', errors, reload, 'num'),
+    'Label',
+    sortableHeader('Boundary', 'boundary_no', errors, reload, 'num'),
+    'SQLSTATE',
+    'Message',
+    sortableHeader('Created', 'created_at', errors, reload),
+  ];
+
+  const rows = result.rows.map((row) =>
+    el('tr', {}, [
+      cell(row.error_id, 'num'),
+      cell(
+        el('a', { class: 'run-link', href: `#/runs/${row.run_id}`, text: String(row.run_id) }),
+        'num',
+      ),
+      cell(row.run_label),
+      cell(row.boundary_no, 'num'),
+      cell(row.sqlstate, 'mono'),
+      cell(row.message),
+      cell(formatDateTime(row.created_at)),
+    ]),
+  );
+
+  const panel = el('section', { class: 'panel' }, [
+    filters,
+    el('div', { class: 'table-wrap' }, [table(headers, rows)]),
+    result.total === 0 ? el('p', { class: 'empty', text: 'No errors match the filters.' }) : '',
+    pager(result, onChange),
+  ]);
+
+  elements.view.replaceChildren(panel);
+}
+
 // Screens are registered here; an unknown route falls back to the runs list.
 const views = {
   runs: renderRunsView,
+  errors: renderErrors,
 };
 
 async function render() {
