@@ -5,6 +5,8 @@ import express from 'express';
 
 import { ConfigError, loadConfig, parseArgs } from './config.js';
 import { createPool } from './db.js';
+import { listRuns } from './repository.js';
+import { resolveTarget, TargetError } from './target.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -30,6 +32,31 @@ function publicConfig(config) {
   };
 }
 
+// Answers 400 for a bad schema and reports whether it handled the error.
+function sendTargetError(error, response) {
+  if (error instanceof TargetError) {
+    response.status(400).json({ error: error.message });
+    return true;
+  }
+  return false;
+}
+
+function parseRunsParams(query) {
+  return {
+    page: query.page,
+    pageSize: query.pageSize,
+    sort: query.sort,
+    dir: query.dir,
+    filters: {
+      label: query.label,
+      chunk_by: query.chunk_by,
+      state: query.state,
+      from: query.from,
+      to: query.to,
+    },
+  };
+}
+
 function createApp(config, pool) {
   const app = express();
   app.use(express.json());
@@ -44,6 +71,16 @@ function createApp(config, pool) {
       await pool.query('SELECT 1');
       response.json({ ok: true });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/runs', async (request, response, next) => {
+    try {
+      const target = resolveTarget(config, request.query);
+      response.json(await listRuns(pool, config, target, parseRunsParams(request.query)));
+    } catch (error) {
+      if (sendTargetError(error, response)) return;
       next(error);
     }
   });

@@ -305,3 +305,147 @@ tr:hover td {
 .lock.locked .dot {
   background: var(--danger);
 }
+
+/* --- dml_utils viewer additions --- */
+
+.nav {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.nav a:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.nav a.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.badge.pending {
+  color: var(--muted);
+  border-color: currentcolor;
+}
+
+.badge.running {
+  color: var(--warn);
+  border-color: currentcolor;
+}
+
+.badge.completed {
+  color: var(--ok);
+  border-color: currentcolor;
+}
+
+.badge.archived {
+  color: var(--muted);
+  border-color: var(--border);
+  opacity: 0.8;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 9rem;
+}
+
+.progress .bar {
+  flex: 1;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
+  overflow: hidden;
+}
+
+.progress .bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.progress .pct {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.run-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.run-link:hover {
+  text-decoration: underline;
+}
+
+th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+th[data-sort]::after {
+  content: '';
+  margin-left: 0.3rem;
+  color: var(--muted);
+}
+
+th[data-sort].asc::after {
+  content: '▲';
+}
+
+th[data-sort].desc::after {
+  content: '▼';
+}
+
+.section-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.detail-grid dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.detail-grid dd {
+  margin: 0.1rem 0 0;
+  word-break: break-word;
+}
+
+.sql-text {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+  overflow: auto;
+  max-height: 20rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
+.muted {
+  color: var(--muted);
+}
