@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dml_utils viewer</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>dml_utils viewer</h1>
+        <p class="subtitle" id="target">Loading…</p>
+      </div>
+      <nav class="nav" id="nav">
+        <a href="#/runs" data-view="runs">Runs</a>
+        <a href="#/errors" data-view="errors">Errors</a>
+      </nav>
+    </header>
+
+    <main>
+      <div id="view"></div>
+
+      <div class="error" id="error" role="alert" hidden>
+        <span id="error-text"></span>
+        <button type="button" id="error-close" aria-label="Dismiss error">×</button>
+      </div>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

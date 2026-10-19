@@ -1,0 +1,29 @@
+# Default configuration for dml-utils-viewer.
+#
+# Point this at the database that holds the dml_utils_data migration tables. A
+# different file can be selected with `--config <path>` or the CONFIG
+# environment variable.
+#
+# The database password is never stored here: it is read from the environment
+# variable named by `database.passwordEnv` (VIEWER_DB_PASSWORD by default).
+#
+# These values mirror the built-in defaults in src/config.js, which are used
+# when this file is absent. Keep the two in sync.
+
+database:
+  host: 127.0.0.1
+  port: 5432
+  name: dml_utils
+  user: postgres
+  passwordEnv: VIEWER_DB_PASSWORD
+  ssl: false
+
+# The schema holding the migration tables (migration_run, migration_boundary,
+# migration_error). dml_utils keeps them in a dedicated data schema.
+schema: dml_utils_data
+
+server:
+  host: 127.0.0.1
+  port: 3220
+  pageSize: 25
+  maxPageSize: 200
