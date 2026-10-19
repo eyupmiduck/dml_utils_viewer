@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { DEFAULT_CONFIG } from '../src/config.js';
-import { buildRunsQuery, RUN_COLUMNS } from '../src/query.js';
+import {
+  buildBoundariesQuery,
+  buildErrorsQuery,
+  buildRunsQuery,
+  RUN_COLUMNS,
+} from '../src/query.js';
 
 const TARGET = { schema: 'dml_utils_data' };
 
@@ -91,4 +96,42 @@ test('sorts ascending on request', () => {
   assert.equal(query.sort, 'created_at');
   assert.equal(query.dir, 'ASC');
   assert.match(query.rowsSql, /ORDER BY created_at ASC/);
+});
+
+test('builds the boundaries query for a run with a state filter', () => {
+  const query = buildBoundariesQuery(DEFAULT_CONFIG, TARGET, '42', {
+    filters: { state: 'completed' },
+    page: 2,
+    pageSize: 10,
+  });
+
+  assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_boundary"/);
+  assert.match(query.rowsSql, /\(boundary_id\)\.bigint_values/);
+  assert.match(query.rowsSql, /WHERE run_id = \$1 AND completed_at IS NOT NULL/);
+  assert.match(query.rowsSql, /ORDER BY boundary_no ASC/);
+  assert.match(query.rowsSql, /LIMIT \$2 OFFSET \$3/);
+  assert.deepEqual(query.countValues, ['42']);
+  assert.deepEqual(query.rowsValues, ['42', 10, 10]);
+});
+
+test('builds the errors query across runs with filters', () => {
+  const query = buildErrorsQuery(DEFAULT_CONFIG, TARGET, {
+    filters: { run_id: '42', sqlstate: '23514', message: 'nope' },
+  });
+
+  assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_error" e/);
+  assert.match(query.rowsSql, /LEFT JOIN "dml_utils_data"\."migration_run" r/);
+  assert.match(query.rowsSql, /e\.run_id = \$1/);
+  assert.match(query.rowsSql, /e\.sqlstate ILIKE \$2/);
+  assert.match(query.rowsSql, /e\.message ILIKE \$3/);
+  assert.deepEqual(query.countValues, ['42', '%23514%', '%nope%']);
+  assert.equal(query.sort, 'error_id');
+  assert.equal(query.dir, 'DESC');
+});
+
+test('ignores a non-numeric run_id filter', () => {
+  const query = buildErrorsQuery(DEFAULT_CONFIG, TARGET, { filters: { run_id: 'abc' } });
+
+  assert.doesNotMatch(query.rowsSql, /e\.run_id =/);
+  assert.deepEqual(query.countValues, []);
 });

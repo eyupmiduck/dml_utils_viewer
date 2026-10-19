@@ -13,6 +13,7 @@ const state = {
   defaults: { schema: '' },
   maxPageSize: 200,
   runs: { page: 1, pageSize: 25, sort: 'run_id', dir: 'desc', pages: 1, total: 0, filters: {} },
+  boundaries: { page: 1, pageSize: 25 },
 };
 
 const elements = {
@@ -358,9 +359,123 @@ async function renderRuns() {
   elements.view.replaceChildren(panel);
 }
 
+/** Renders a migration_key from its position-aligned value arrays. */
+function formatKey(row) {
+  const arrays = [row.bigint_values, row.text_values, row.uuid_values];
+  const length = arrays.reduce((max, array) => Math.max(max, array?.length ?? 0), 0);
+  const parts = [];
+  for (let index = 0; index < length; index += 1) {
+    const value = arrays
+      .map((array) => (array ? array[index] : undefined))
+      .find((candidate) => candidate !== undefined && candidate !== null);
+    parts.push(value === undefined ? '' : String(value));
+  }
+  return `(${parts.join(', ')})`;
+}
+
+function detailList(pairs) {
+  const list = el('dl', { class: 'detail-grid' });
+  for (const [label, value] of pairs) {
+    list.append(el('dt', { text: label }), el('dd', { text: value ?? '' }));
+  }
+  return list;
+}
+
+async function renderRunDetail(id) {
+  const schema = encodeURIComponent(state.schema);
+  const boundaries = state.boundaries;
+  const [detail, boundaryPage, errorPage] = await Promise.all([
+    api(`${API.runs}/${id}?schema=${schema}`),
+    api(
+      `${API.runs}/${id}/boundaries?schema=${schema}&page=${boundaries.page}&pageSize=${boundaries.pageSize}`,
+    ),
+    api(`${API.runs}/${id}/errors?schema=${schema}&pageSize=${state.maxPageSize}`),
+  ]);
+
+  const { run, counts } = detail;
+  const reload = () => renderRunDetail(id).catch(showError);
+
+  const summary = el('section', { class: 'panel' }, [
+    el('p', {}, [el('a', { class: 'run-link', href: '#/runs', text: '← Runs' })]),
+    el('h2', { class: 'section-title' }, [
+      el('span', { text: `Run ${run.run_id} · ${run.label} ` }),
+      badge(run.state),
+    ]),
+    detailList([
+      ['Strategy', run.chunk_by],
+      ['Chunk size', run.chunk_size],
+      ['Threads', run.threads],
+      ['Driving table', `${run.driving_table_schema_name}.${run.driving_table_name}`],
+      ['Alias', run.driving_table_alias],
+      ['Relation filepath', run.driving_table_relation_filepath],
+      ['Chunks', `${run.total_chunks_completed}/${run.total_chunks}`],
+      ['Boundaries', `${counts.boundaries_completed}/${counts.boundaries}`],
+      ['Errors', counts.errors],
+      ['Created', formatDateTime(run.created_at)],
+      ['Started', formatDateTime(run.started_at)],
+      ['Boundaries calculated', formatDateTime(run.boundaries_calculated_at)],
+      ['Completed', formatDateTime(run.completed_at)],
+      ['Archived', formatDateTime(run.archived_at)],
+    ]),
+    el('h3', { class: 'section-title', text: 'SQL' }),
+    el('pre', { class: 'sql-text', text: run.sql_text }),
+  ]);
+
+  const boundaryRows = boundaryPage.rows.map((row) =>
+    el('tr', {}, [
+      cell(row.boundary_no, 'num'),
+      cell(formatKey(row), 'mono'),
+      el('td', {}, [badge(row.state)]),
+      cell(formatDateTime(row.started_at)),
+      cell(formatDateTime(row.completed_at)),
+    ]),
+  );
+  const boundariesSection = el('section', { class: 'panel' }, [
+    el('h3', { class: 'section-title', text: `Boundaries (${boundaryPage.completed} completed)` }),
+    el('div', { class: 'table-wrap' }, [
+      table(['#', 'Key', 'State', 'Started', 'Completed'], boundaryRows),
+    ]),
+    boundaryPage.total === 0
+      ? el('p', { class: 'empty', text: 'No boundaries for this run.' })
+      : pager(boundaryPage, (page, pageSize) => {
+          state.boundaries.page = Math.min(Math.max(1, page), boundaryPage.pages);
+          if (pageSize) state.boundaries.pageSize = pageSize;
+          reload();
+        }),
+  ]);
+
+  const errorRows = errorPage.rows.map((row) =>
+    el('tr', {}, [
+      cell(row.error_id, 'num'),
+      cell(row.boundary_no, 'num'),
+      cell(row.sqlstate, 'mono'),
+      cell(row.message),
+      cell(formatDateTime(row.created_at)),
+    ]),
+  );
+  const errorsSection = el('section', { class: 'panel' }, [
+    el('h3', { class: 'section-title', text: `Errors (${errorPage.total})` }),
+    errorPage.total === 0
+      ? el('p', { class: 'empty', text: 'No errors recorded for this run.' })
+      : el('div', { class: 'table-wrap' }, [
+          table(['Error', 'Boundary', 'SQLSTATE', 'Message', 'Created'], errorRows),
+        ]),
+  ]);
+
+  elements.view.replaceChildren(summary, boundariesSection, errorsSection);
+}
+
+async function renderRunsView(rest) {
+  if (rest.length > 0) {
+    await renderRunDetail(rest[0]);
+    return;
+  }
+  await renderRuns();
+}
+
 // Screens are registered here; an unknown route falls back to the runs list.
 const views = {
-  runs: renderRuns,
+  runs: renderRunsView,
 };
 
 async function render() {

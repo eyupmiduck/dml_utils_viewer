@@ -5,7 +5,7 @@ import express from 'express';
 
 import { ConfigError, loadConfig, parseArgs } from './config.js';
 import { createPool } from './db.js';
-import { listRuns } from './repository.js';
+import { listRuns, getRun, listBoundaries, listErrors } from './repository.js';
 import { resolveTarget, TargetError } from './target.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -57,6 +57,39 @@ function parseRunsParams(query) {
   };
 }
 
+function parseBoundaryParams(query) {
+  return {
+    page: query.page,
+    pageSize: query.pageSize,
+    filters: { state: query.state },
+  };
+}
+
+function parseErrorParams(query) {
+  return {
+    page: query.page,
+    pageSize: query.pageSize,
+    sort: query.sort,
+    dir: query.dir,
+    filters: {
+      sqlstate: query.sqlstate,
+      message: query.message,
+      from: query.from,
+      to: query.to,
+    },
+  };
+}
+
+// A run id from the path: only digits are accepted, so it is a clean bigint
+// bind; anything else is a client mistake.
+function parseRunId(value, response) {
+  if (!/^\d+$/.test(value ?? '')) {
+    response.status(400).json({ error: 'run id must be a positive integer' });
+    return null;
+  }
+  return value;
+}
+
 function createApp(config, pool) {
   const app = express();
   app.use(express.json());
@@ -79,6 +112,51 @@ function createApp(config, pool) {
     try {
       const target = resolveTarget(config, request.query);
       response.json(await listRuns(pool, config, target, parseRunsParams(request.query)));
+    } catch (error) {
+      if (sendTargetError(error, response)) return;
+      next(error);
+    }
+  });
+
+  app.get('/api/runs/:id', async (request, response, next) => {
+    const runId = parseRunId(request.params.id, response);
+    if (runId === null) return;
+    try {
+      const target = resolveTarget(config, request.query);
+      const result = await getRun(pool, target, runId);
+      if (result === null) {
+        response.status(404).json({ error: `Run ${runId} not found.` });
+        return;
+      }
+      response.json(result);
+    } catch (error) {
+      if (sendTargetError(error, response)) return;
+      next(error);
+    }
+  });
+
+  app.get('/api/runs/:id/boundaries', async (request, response, next) => {
+    const runId = parseRunId(request.params.id, response);
+    if (runId === null) return;
+    try {
+      const target = resolveTarget(config, request.query);
+      response.json(
+        await listBoundaries(pool, config, target, runId, parseBoundaryParams(request.query)),
+      );
+    } catch (error) {
+      if (sendTargetError(error, response)) return;
+      next(error);
+    }
+  });
+
+  app.get('/api/runs/:id/errors', async (request, response, next) => {
+    const runId = parseRunId(request.params.id, response);
+    if (runId === null) return;
+    try {
+      const target = resolveTarget(config, request.query);
+      const params = parseErrorParams(request.query);
+      params.filters.run_id = runId;
+      response.json(await listErrors(pool, config, target, params));
     } catch (error) {
       if (sendTargetError(error, response)) return;
       next(error);
