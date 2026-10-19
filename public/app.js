@@ -76,8 +76,14 @@ function formatNumber(value) {
   return value === null || value === undefined ? '' : String(value);
 }
 
-function cell(text, className) {
-  return el('td', { class: className, text: text ?? '' });
+function cell(value, className) {
+  const td = el('td', { class: className });
+  if (value instanceof Node) {
+    td.append(value);
+  } else {
+    td.textContent = value ?? '';
+  }
+  return td;
 }
 
 function badge(value) {
