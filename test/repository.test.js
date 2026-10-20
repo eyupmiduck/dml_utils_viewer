@@ -44,3 +44,10 @@ test('returns an empty key when no arrays are present', () => {
   assert.deepEqual(keyValues({}), []);
   assert.deepEqual(keyValues({ next_bigint_values: null }, 'next_'), []);
 });
+
+test('rejects a non-canonical key with values from multiple kinds', () => {
+  assert.throws(
+    () => keyValues({ bigint_values: ['1'], text_values: ['x'], uuid_values: null }),
+    /multiple values/,
+  );
+});

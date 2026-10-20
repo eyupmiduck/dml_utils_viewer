@@ -79,7 +79,8 @@ test("lists a page of a run's boundaries", { skip }, async () => {
     assert.ok(page.completed >= 0);
     for (const row of page.rows) {
       assert.ok(row.boundary_no !== undefined && row.boundary_no !== null);
-      assert.ok(['pending', 'running', 'completed'].includes(row.state));
+      assert.ok(['pending', 'running', 'completed', 'cancelled'].includes(row.state));
+      assert.equal(typeof row.is_chunk, 'boolean');
       // The migration_key value arrays are selected for rendering.
       assert.ok('bigint_values' in row && 'text_values' in row && 'uuid_values' in row);
     }
@@ -127,7 +128,7 @@ test('reads a chunk with its explain plan, or a plan error and its details', { s
 
     const terminal = await getChunk(pool, config, runId, String(detail.run.total_chunks));
     if (terminal !== null) {
-      assert.match(terminal.planError, /terminal high-water/);
+      assert.match(terminal.planError, /no following boundary/);
     }
   });
 });

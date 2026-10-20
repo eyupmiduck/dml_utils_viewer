@@ -60,11 +60,19 @@ test('filters by chunk_by and state', () => {
   assert.deepEqual(query.countValues, ['blocks']);
 });
 
-test('filters cancelled runs and excludes them from running', () => {
+test('filters cancelled and pending runs consistently with the state', () => {
   const cancelled = buildRunsQuery(DEFAULT_CONFIG, { filters: { state: 'cancelled' } });
+  const pending = buildRunsQuery(DEFAULT_CONFIG, { filters: { state: 'pending' } });
   const running = buildRunsQuery(DEFAULT_CONFIG, { filters: { state: 'running' } });
 
-  assert.match(cancelled.rowsSql, /archived_at IS NULL AND cancelled_at IS NOT NULL/);
+  assert.match(
+    cancelled.rowsSql,
+    /archived_at IS NULL AND cancelled_at IS NOT NULL AND completed_at IS NULL/,
+  );
+  assert.match(
+    pending.rowsSql,
+    /archived_at IS NULL AND started_at IS NULL AND cancelled_at IS NULL/,
+  );
   assert.match(running.rowsSql, /cancelled_at IS NULL/);
 });
 
@@ -122,6 +130,7 @@ test('builds the boundaries query for a run with a state filter', () => {
   assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_boundary"/);
   assert.match(query.rowsSql, /\(boundary_id\)\.bigint_values/);
   assert.match(query.rowsSql, /cancelled_at/);
+  assert.match(query.rowsSql, /AS is_chunk/);
   assert.match(query.rowsSql, /WHERE run_id = \$1 AND completed_at IS NOT NULL/);
   assert.match(query.rowsSql, /ORDER BY boundary_no ASC/);
   assert.match(query.rowsSql, /LIMIT \$2 OFFSET \$3/);

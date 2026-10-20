@@ -148,7 +148,7 @@ function createApp(config, pool) {
     try {
       const result = await getChunk(pool, config, runId, boundaryNo);
       if (result === null) {
-        response.status(404).json({ error: `Chunk ${runId}/${boundaryNo} not found.` });
+        response.status(404).json({ error: `Run ${runId} or chunk ${boundaryNo} not found.` });
         return;
       }
       response.json(result);

@@ -453,7 +453,7 @@ async function renderRunDetail(id, token) {
   const boundaryRows = boundaryPage.rows.map((row) =>
     el('tr', {}, [
       cell(
-        Number(row.boundary_no) < Number(run.total_chunks)
+        row.is_chunk
           ? el('a', {
               class: 'run-link',
               href: `#/runs/${run.run_id}/chunks/${row.boundary_no}`,
@@ -615,25 +615,26 @@ function planNode(node) {
 
 function planText(value) {
   const parsed = parsePlan(value) ?? value;
+  if (parsed === undefined || parsed === null) return '';
   if (typeof parsed === 'string') return parsed;
-  return JSON.stringify(parsed, null, 2) ?? String(parsed);
+  return JSON.stringify(parsed, null, 2);
 }
 
 function planView(value) {
-  const document = planDocument(value);
-  if (document === null || document.Plan === undefined) {
+  const planDoc = planDocument(value);
+  if (planDoc === null || planDoc.Plan === undefined) {
     return el('pre', { class: 'sql-text', text: planText(value) });
   }
   const timing = [];
-  if (document['Planning Time'] !== undefined) {
-    timing.push(`Planning ${document['Planning Time']} ms`);
+  if (planDoc['Planning Time'] !== undefined) {
+    timing.push(`Planning ${planDoc['Planning Time']} ms`);
   }
-  if (document['Execution Time'] !== undefined) {
-    timing.push(`Execution ${document['Execution Time']} ms`);
+  if (planDoc['Execution Time'] !== undefined) {
+    timing.push(`Execution ${planDoc['Execution Time']} ms`);
   }
   return el('div', { class: 'plan' }, [
     timing.length ? el('p', { class: 'plan-timing', text: timing.join(' · ') }) : '',
-    planNode(document.Plan),
+    planNode(planDoc.Plan),
     el('details', { class: 'plan-raw' }, [
       el('summary', { text: 'Raw JSON' }),
       el('pre', { class: 'sql-text', text: planText(value) }),
@@ -702,7 +703,12 @@ async function renderChunkDetail(runId, boundaryNo, token) {
       ['Driving table', `${run.driving_table_schema_name}.${run.driving_table_name}`],
       ['Alias', run.driving_table_alias],
       [isBlocks ? 'Start block' : 'Start key', formatKey(boundary)],
-      [isBlocks ? 'End block' : 'End key', formatKey(boundary, 'next_')],
+      [
+        isBlocks ? 'End block' : 'End key',
+        boundary.next_boundary_no === null || boundary.next_boundary_no === undefined
+          ? '— (no following boundary)'
+          : formatKey(boundary, 'next_'),
+      ],
       ['Started', formatDateTime(boundary.started_at)],
       ['Completed', formatDateTime(boundary.completed_at)],
       ['Cancelled', formatDateTime(boundary.cancelled_at)],
