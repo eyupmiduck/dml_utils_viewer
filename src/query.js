@@ -25,6 +25,7 @@ export const RUN_COLUMNS = [
   'started_at',
   'boundaries_calculated_at',
   'completed_at',
+  'cancelled_at',
   'archived_at',
 ];
 
@@ -33,19 +34,22 @@ export const RUN_COLUMNS = [
 export const RUN_DETAIL_COLUMNS = [...RUN_COLUMNS, 'sql_text', 'driving_table_relation_filepath'];
 
 // The run's derived state, from its timestamps. Archived wins, then completed,
-// then a run that has started, otherwise it is still pending.
+// then cancelled, then a run that has started, otherwise it is still pending.
 export const RUN_STATE_EXPRESSION = `CASE
       WHEN archived_at IS NOT NULL THEN 'archived'
       WHEN completed_at IS NOT NULL THEN 'completed'
+      WHEN cancelled_at IS NOT NULL THEN 'cancelled'
       WHEN started_at IS NOT NULL THEN 'running'
       ELSE 'pending'
     END AS state`;
 
 // The WHERE fragment for each selectable state.
 const STATE_FILTERS = {
-  pending: 'archived_at IS NULL AND started_at IS NULL',
-  running: 'archived_at IS NULL AND started_at IS NOT NULL AND completed_at IS NULL',
-  completed: 'archived_at IS NULL AND completed_at IS NOT NULL',
+  pending: 'archived_at IS NULL AND started_at IS NULL AND cancelled_at IS NULL',
+  running:
+    'archived_at IS NULL AND started_at IS NOT NULL AND completed_at IS NULL AND cancelled_at IS NULL',
+  completed: 'archived_at IS NULL AND completed_at IS NOT NULL AND cancelled_at IS NULL',
+  cancelled: 'archived_at IS NULL AND cancelled_at IS NOT NULL AND completed_at IS NULL',
   archived: 'archived_at IS NOT NULL',
 };
 
@@ -60,6 +64,7 @@ const SORTABLE_COLUMNS = new Set([
   'created_at',
   'started_at',
   'completed_at',
+  'cancelled_at',
   'total_chunks',
   'total_chunks_completed',
 ]);
@@ -145,29 +150,60 @@ export function buildRunsQuery(config, params = {}) {
   return { rowsSql, countSql, rowsValues, countValues, page, pageSize, sort, dir };
 }
 
-/** migration_boundary columns returned to the UI, in display order. */
-export const BOUNDARY_COLUMNS = [
-  'boundary_no',
-  '(boundary_id).bigint_values AS bigint_values',
-  '(boundary_id).text_values AS text_values',
-  '(boundary_id).uuid_values AS uuid_values',
-  'created_at',
-  'started_at',
-  'completed_at',
-];
+/* The position-aligned key arrays, shared by the boundary list and chunk query. */
+function keyColumns(prefix = '', aliasPrefix = '') {
+  return [
+    `(${prefix}boundary_id).bigint_values AS ${aliasPrefix}bigint_values`,
+    `(${prefix}boundary_id).text_values AS ${aliasPrefix}text_values`,
+    `(${prefix}boundary_id).uuid_values AS ${aliasPrefix}uuid_values`,
+  ];
+}
 
-// The boundary's derived state: a chunk that has completed, one in progress,
-// otherwise it has not been claimed yet.
-const BOUNDARY_STATE_EXPRESSION = `CASE
-      WHEN completed_at IS NOT NULL THEN 'completed'
-      WHEN started_at IS NOT NULL THEN 'running'
+/**
+ * migration_boundary columns returned to the UI, in display order.
+ *
+ * @param {string} [prefix] table alias prefix, including the trailing dot
+ * @returns {string[]} the selected columns
+ */
+export function boundaryColumns(prefix = '') {
+  return [
+    `${prefix}boundary_no`,
+    ...keyColumns(prefix),
+    `${prefix}created_at`,
+    `${prefix}started_at`,
+    `${prefix}completed_at`,
+    `${prefix}cancelled_at`,
+  ];
+}
+
+/** migration_boundary columns returned to the UI, in display order. */
+export const BOUNDARY_COLUMNS = boundaryColumns();
+
+/**
+ * The boundary's derived state: a chunk that has completed, one that was
+ * cancelled before completing, one in progress, otherwise it has not been
+ * claimed yet. `completed_at` wins over `cancelled_at` for a boundary that
+ * finished at the same time the run was cancelled.
+ *
+ * @param {string} [prefix] table alias prefix, including the trailing dot
+ * @returns {string} the SQL CASE expression, aliased as `state`
+ */
+export function boundaryStateExpression(prefix = '') {
+  return `CASE
+      WHEN ${prefix}completed_at IS NOT NULL THEN 'completed'
+      WHEN ${prefix}cancelled_at IS NOT NULL THEN 'cancelled'
+      WHEN ${prefix}started_at IS NOT NULL THEN 'running'
       ELSE 'pending'
     END AS state`;
+}
+
+const BOUNDARY_STATE_EXPRESSION = boundaryStateExpression();
 
 const BOUNDARY_STATE_FILTERS = {
-  pending: 'completed_at IS NULL AND started_at IS NULL',
-  running: 'started_at IS NOT NULL AND completed_at IS NULL',
+  pending: 'completed_at IS NULL AND started_at IS NULL AND cancelled_at IS NULL',
+  running: 'started_at IS NOT NULL AND completed_at IS NULL AND cancelled_at IS NULL',
   completed: 'completed_at IS NOT NULL',
+  cancelled: 'completed_at IS NULL AND cancelled_at IS NOT NULL',
 };
 
 /** migration_error columns returned to the UI, in display order. */
@@ -208,12 +244,42 @@ export function buildBoundariesQuery(config, runId, params = {}) {
   const offset = (page - 1) * pageSize;
 
   const rowsSql =
-    `SELECT ${BOUNDARY_COLUMNS.join(', ')}, ${BOUNDARY_STATE_EXPRESSION} FROM ${table}${whereSql}` +
+    `SELECT ${BOUNDARY_COLUMNS.join(', ')}, ${BOUNDARY_STATE_EXPRESSION},` +
+    ` EXISTS (SELECT 1 FROM ${table} nb` +
+    ` WHERE nb.run_id = b.run_id AND nb.boundary_no = b.boundary_no + 1) AS is_chunk` +
+    ` FROM ${table} b${whereSql}` +
     ` ORDER BY boundary_no ASC LIMIT $${countValues.length + 1} OFFSET $${countValues.length + 2}`;
   const rowsValues = [...countValues, pageSize, offset];
   const countSql = `SELECT count(*)::int AS total, count(completed_at)::int AS completed FROM ${table}${whereSql}`;
 
   return { rowsSql, countSql, rowsValues, countValues, page, pageSize };
+}
+
+/** Columns selected for one chunk's boundary and the next (chunk end) boundary. */
+export const CHUNK_COLUMNS = [
+  ...boundaryColumns('b.'),
+  ...keyColumns('nb.', 'next_'),
+  'nb.boundary_no AS next_boundary_no',
+];
+
+/**
+ * Builds the query for one chunk boundary and its following boundary, which is
+ * the exclusive/inclusive end of the chunk.
+ *
+ * @param {object} config the application configuration
+ * @param {string} runId the run id (a digit string, bound as a bigint)
+ * @param {string} boundaryNo the boundary number (a digit string, bound as a bigint)
+ * @returns {{rowsSql: string, rowsValues: unknown[]}} the query and parameters
+ */
+export function buildChunkQuery(config, runId, boundaryNo) {
+  const table = qualifyName(config.schema, TABLES.boundary);
+  const rowsSql =
+    `SELECT ${CHUNK_COLUMNS.join(', ')}, ${boundaryStateExpression('b.')}` +
+    ` FROM ${table} b` +
+    ` LEFT JOIN ${table} nb ON nb.run_id = b.run_id AND nb.boundary_no = b.boundary_no + 1` +
+    ` WHERE b.run_id = $1 AND b.boundary_no = $2`;
+
+  return { rowsSql, rowsValues: [runId, boundaryNo] };
 }
 
 /**

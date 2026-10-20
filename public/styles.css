@@ -328,6 +328,94 @@ tr:hover td {
   opacity: 0.8;
 }
 
+.badge.cancelled {
+  color: var(--danger);
+  border-color: currentcolor;
+}
+
+.plan-note {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+}
+
+.plan-block {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.plan-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.plan-timing {
+  margin: 0.5rem 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.plan-node {
+  margin: 0.25rem 0;
+}
+
+.plan-node-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.plan-node-type {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+
+.plan-node-meta {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.plan-node-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.15rem 0.75rem;
+  margin: 0.25rem 0 0.25rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+.plan-node-details dt {
+  color: var(--muted);
+}
+
+.plan-node-details dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.plan-children {
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 1px dashed var(--border);
+}
+
+.plan-raw {
+  margin-top: 0.5rem;
+}
+
+.plan-raw summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.plan-raw .sql-text {
+  margin-top: 0.5rem;
+}
+
 .progress {
   display: flex;
   align-items: center;
@@ -376,6 +464,10 @@ tr:hover td {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0.6rem 1rem;
   margin: 0 0 1rem;
+}
+
+.detail-item {
+  min-width: 0;
 }
 
 .detail-grid dt {

@@ -1,12 +1,34 @@
 import { qualifyName } from './identifiers.js';
 import {
   buildBoundariesQuery,
+  buildChunkQuery,
   buildErrorsQuery,
   buildRunsQuery,
   RUN_DETAIL_COLUMNS,
   RUN_STATE_EXPRESSION,
   TABLES,
 } from './query.js';
+
+// dml_utils.explain_migration_chunk(
+//   i_sql_text, i_driving_table_schema_name, i_driving_table_name,
+//   i_start_values text[], i_end_values text[], i_is_final boolean,
+//   i_driving_table_alias)
+const EXPLAIN_CHUNK_SQL = `
+  SELECT o_plan_kind, o_sql_text, o_plan
+  FROM dml_utils.explain_migration_chunk($1, $2, $3, $4::text[], $5::text[], $6, $7)`;
+
+// dml_utils.explain_migration_chunks(
+//   i_sql_text, i_driving_table_schema_name, i_driving_table_name,
+//   i_chunk_size positive_integer, i_driving_table_alias, i_chunk_by)
+const EXPLAIN_CHUNKS_SQL = `
+  SELECT o_plan_kind, o_sql_text, o_plan
+  FROM dml_utils.explain_migration_chunks(
+    $1,
+    $2,
+    $3,
+    $4::dml_utils_data.positive_integer,
+    $5,
+    $6::dml_utils_data.chunking_strategy)`;
 
 // Runs a page query (rows + count) and assembles the pagination envelope.
 async function paginate(pool, query, extra = () => ({})) {
@@ -39,6 +61,24 @@ export async function listRuns(pool, config, params = {}) {
 }
 
 /**
+ * Reads one run row without the boundary/error counts, or `null` when it does
+ * not exist. The chunk page only needs the run's recorded configuration.
+ *
+ * @param {import('pg').Pool} pool the connection pool
+ * @param {object} config the application configuration
+ * @param {string} runId the run id
+ * @returns {Promise<object|null>} the run row
+ */
+async function selectRun(pool, config, runId) {
+  const runTable = qualifyName(config.schema, TABLES.run);
+  const result = await pool.query(
+    `SELECT ${RUN_DETAIL_COLUMNS.join(', ')}, ${RUN_STATE_EXPRESSION} FROM ${runTable} WHERE run_id = $1`,
+    [runId],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
  * Reads one run and its counts, or `null` when it does not exist.
  *
  * @param {import('pg').Pool} pool the connection pool
@@ -47,18 +87,13 @@ export async function listRuns(pool, config, params = {}) {
  * @returns {Promise<{run: object, counts: object}|null>} the run and its counts
  */
 export async function getRun(pool, config, runId) {
-  const runTable = qualifyName(config.schema, TABLES.run);
-  const boundaryTable = qualifyName(config.schema, TABLES.boundary);
-  const errorTable = qualifyName(config.schema, TABLES.error);
-
-  const runResult = await pool.query(
-    `SELECT ${RUN_DETAIL_COLUMNS.join(', ')}, ${RUN_STATE_EXPRESSION} FROM ${runTable} WHERE run_id = $1`,
-    [runId],
-  );
-  if (runResult.rows.length === 0) {
+  const run = await selectRun(pool, config, runId);
+  if (run === null) {
     return null;
   }
 
+  const boundaryTable = qualifyName(config.schema, TABLES.boundary);
+  const errorTable = qualifyName(config.schema, TABLES.error);
   const countsResult = await pool.query(
     `SELECT (SELECT count(*)::int FROM ${boundaryTable} WHERE run_id = $1) AS boundaries,
             (SELECT count(completed_at)::int FROM ${boundaryTable} WHERE run_id = $1) AS boundaries_completed,
@@ -66,7 +101,7 @@ export async function getRun(pool, config, runId) {
     [runId],
   );
 
-  return { run: runResult.rows[0], counts: countsResult.rows[0] };
+  return { run, counts: countsResult.rows[0] };
 }
 
 /**
@@ -94,4 +129,133 @@ export async function listBoundaries(pool, config, runId, params = {}) {
  */
 export async function listErrors(pool, config, params = {}) {
   return paginate(pool, buildErrorsQuery(config, params));
+}
+
+/**
+ * Flattens a boundary's position-aligned migration_key arrays into one text
+ * value per primary-key column, in key order. `prefix` selects the next
+ * boundary's aliases (`next_`) for a chunk's end key.
+ *
+ * <p>The database's migration_key contract guarantees exactly one array holds a
+ * non-NULL value at each index. A row that violates that is rejected instead of
+ * silently choosing one kind, so a malformed key cannot explain the wrong range.
+ *
+ * @param {object} row the boundary row
+ * @param {string} [prefix] array-column prefix
+ * @returns {string[]} the key values, or an empty array when none are present
+ */
+export function keyValues(row, prefix = '') {
+  const arrays = [
+    row[`${prefix}bigint_values`],
+    row[`${prefix}text_values`],
+    row[`${prefix}uuid_values`],
+  ];
+  const length = arrays.reduce(
+    (max, values) => Math.max(max, Array.isArray(values) ? values.length : 0),
+    0,
+  );
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const candidates = arrays
+      .map((values) => (Array.isArray(values) ? values[index] : undefined))
+      .filter((candidate) => candidate !== undefined && candidate !== null);
+    if (candidates.length > 1) {
+      throw new Error(`migration_key has multiple values at position ${index + 1}`);
+    }
+    result.push(candidates.length === 1 ? String(candidates[0]) : null);
+  }
+  return result;
+}
+
+/**
+ * Reads one chunk boundary, its following boundary and the EXPLAIN plan for the
+ * chunk. Explain failures (for example the driving table was dropped, the
+ * dml_utils function is absent, or the boundary is terminal) are reported in
+ * `planError`; the run and boundary details are still returned.
+ *
+ * @param {import('pg').Pool} pool the connection pool
+ * @param {object} config the application configuration
+ * @param {string} runId the run id
+ * @param {string} boundaryNo the boundary number
+ * @returns {Promise<object|null>} the chunk details, or `null` when missing
+ */
+export async function getChunk(pool, config, runId, boundaryNo) {
+  const run = await selectRun(pool, config, runId);
+  if (run === null) return null;
+
+  const query = buildChunkQuery(config, runId, boundaryNo);
+  const boundaryResult = await pool.query(query.rowsSql, query.rowsValues);
+  if (boundaryResult.rows.length === 0) return null;
+
+  const boundary = boundaryResult.rows[0];
+  const boundaryNumber = Number(boundary.boundary_no);
+  const isBlocks = run.chunk_by === 'blocks';
+  const base = {
+    run,
+    boundary,
+    plan: [],
+    planError: null,
+    planErrorCode: null,
+    planScope: isBlocks ? 'representative' : 'chunk',
+  };
+
+  // A boundary is a chunk only when the following boundary exists. This is the
+  // same linkability rule the boundaries list exposes as `is_chunk`, and it
+  // avoids treating the terminal high-water boundary as a chunk.
+  if (boundary.next_boundary_no === null || boundary.next_boundary_no === undefined) {
+    return {
+      ...base,
+      planError: 'This boundary has no following boundary, so there is no chunk to explain.',
+    };
+  }
+
+  if (!isBlocks && (run.total_chunks === null || run.total_chunks === undefined)) {
+    return {
+      ...base,
+      planError:
+        'The run has no total chunk count; cannot determine whether this is the final chunk.',
+    };
+  }
+
+  try {
+    if (isBlocks) {
+      const result = await pool.query(EXPLAIN_CHUNKS_SQL, [
+        run.sql_text,
+        run.driving_table_schema_name,
+        run.driving_table_name,
+        run.chunk_size,
+        run.driving_table_alias,
+        run.chunk_by,
+      ]);
+      return { ...base, plan: result.rows };
+    }
+
+    const startValues = keyValues(boundary);
+    const endValues = keyValues(boundary, 'next_');
+    if (startValues.length === 0 || endValues.length !== startValues.length) {
+      return {
+        ...base,
+        planError:
+          'The next boundary is missing or has a different key width; cannot explain this chunk.',
+      };
+    }
+
+    const totalChunks = Number(run.total_chunks);
+    const isFinal = boundaryNumber + 1 === totalChunks;
+    const result = await pool.query(EXPLAIN_CHUNK_SQL, [
+      run.sql_text,
+      run.driving_table_schema_name,
+      run.driving_table_name,
+      startValues,
+      endValues,
+      isFinal,
+      run.driving_table_alias,
+    ]);
+    return { ...base, plan: result.rows };
+  } catch (error) {
+    // The page is still useful without a plan: the run and boundary details are
+    // already-read immutable metadata. Surface the database message instead of
+    // failing the whole request (a dropped driving table is a common case).
+    return { ...base, planError: error.message, planErrorCode: error.code ?? null };
+  }
 }
