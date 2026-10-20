@@ -3,9 +3,12 @@ import test from 'node:test';
 
 import { DEFAULT_CONFIG } from '../src/config.js';
 import {
+  BOUNDARY_COLUMNS,
   buildBoundariesQuery,
+  buildChunkQuery,
   buildErrorsQuery,
   buildRunsQuery,
+  CHUNK_COLUMNS,
   RUN_COLUMNS,
   RUN_DETAIL_COLUMNS,
 } from '../src/query.js';
@@ -13,6 +16,7 @@ import {
 test('the run detail adds the sql text and relation filepath to the list columns', () => {
   assert.ok(RUN_DETAIL_COLUMNS.includes('sql_text'));
   assert.ok(RUN_DETAIL_COLUMNS.includes('driving_table_relation_filepath'));
+  assert.ok(RUN_COLUMNS.includes('cancelled_at'));
   for (const column of RUN_COLUMNS) {
     assert.ok(RUN_DETAIL_COLUMNS.includes(column));
   }
@@ -51,9 +55,17 @@ test('filters by chunk_by and state', () => {
   assert.match(query.rowsSql, /chunk_by = \$1::dml_utils_data\.chunking_strategy/);
   assert.match(
     query.rowsSql,
-    /archived_at IS NULL AND started_at IS NOT NULL AND completed_at IS NULL/,
+    /archived_at IS NULL AND started_at IS NOT NULL AND completed_at IS NULL AND cancelled_at IS NULL/,
   );
   assert.deepEqual(query.countValues, ['blocks']);
+});
+
+test('filters cancelled runs and excludes them from running', () => {
+  const cancelled = buildRunsQuery(DEFAULT_CONFIG, { filters: { state: 'cancelled' } });
+  const running = buildRunsQuery(DEFAULT_CONFIG, { filters: { state: 'running' } });
+
+  assert.match(cancelled.rowsSql, /archived_at IS NULL AND cancelled_at IS NOT NULL/);
+  assert.match(running.rowsSql, /cancelled_at IS NULL/);
 });
 
 test('ignores an unknown chunk_by and the all state', () => {
@@ -109,11 +121,25 @@ test('builds the boundaries query for a run with a state filter', () => {
 
   assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_boundary"/);
   assert.match(query.rowsSql, /\(boundary_id\)\.bigint_values/);
+  assert.match(query.rowsSql, /cancelled_at/);
   assert.match(query.rowsSql, /WHERE run_id = \$1 AND completed_at IS NOT NULL/);
   assert.match(query.rowsSql, /ORDER BY boundary_no ASC/);
   assert.match(query.rowsSql, /LIMIT \$2 OFFSET \$3/);
   assert.deepEqual(query.countValues, ['42']);
   assert.deepEqual(query.rowsValues, ['42', 10, 10]);
+});
+
+test('builds the chunk query with the next boundary and its state', () => {
+  const query = buildChunkQuery(DEFAULT_CONFIG, '42', '3');
+
+  assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_boundary" b/);
+  assert.match(query.rowsSql, /LEFT JOIN "dml_utils_data"\."migration_boundary" nb/);
+  assert.match(query.rowsSql, /nb\.boundary_no = b\.boundary_no \+ 1/);
+  assert.match(query.rowsSql, /WHERE b\.run_id = \$1 AND b\.boundary_no = \$2/);
+  assert.match(query.rowsSql, /WHEN b\.cancelled_at IS NOT NULL THEN 'cancelled'/);
+  assert.deepEqual(query.rowsValues, ['42', '3']);
+  assert.ok(BOUNDARY_COLUMNS.includes('cancelled_at'));
+  assert.ok(CHUNK_COLUMNS.some((column) => column.includes('next_bigint_values')));
 });
 
 test('builds the errors query across runs with filters', () => {

@@ -290,6 +290,7 @@ async function renderRuns(token) {
           ['pending', 'Pending'],
           ['running', 'Running'],
           ['completed', 'Completed'],
+          ['cancelled', 'Cancelled'],
           ['archived', 'Archived'],
         ],
         runs.filters.state ?? 'all',
@@ -340,6 +341,7 @@ async function renderRuns(token) {
     sortableHeader('Created', 'created_at', runs, reload),
     sortableHeader('Started', 'started_at', runs, reload),
     sortableHeader('Completed', 'completed_at', runs, reload),
+    sortableHeader('Cancelled', 'cancelled_at', runs, reload),
   ];
 
   const rows = result.rows.map((row) =>
@@ -358,6 +360,7 @@ async function renderRuns(token) {
       cell(formatDateTime(row.created_at)),
       cell(formatDateTime(row.started_at)),
       cell(formatDateTime(row.completed_at)),
+      cell(formatDateTime(row.cancelled_at)),
     ]),
   );
 
@@ -373,8 +376,12 @@ async function renderRuns(token) {
 }
 
 /** Renders a migration_key from its position-aligned value arrays. */
-function formatKey(row) {
-  const arrays = [row.bigint_values, row.text_values, row.uuid_values];
+function formatKey(row, prefix = '') {
+  const arrays = [
+    row[`${prefix}bigint_values`],
+    row[`${prefix}text_values`],
+    row[`${prefix}uuid_values`],
+  ];
   const length = arrays.reduce((max, array) => Math.max(max, array?.length ?? 0), 0);
   const parts = [];
   for (let index = 0; index < length; index += 1) {
@@ -389,7 +396,12 @@ function formatKey(row) {
 function detailList(pairs) {
   const list = el('dl', { class: 'detail-grid' });
   for (const [label, value] of pairs) {
-    list.append(el('dt', { text: label }), el('dd', { text: value ?? '' }));
+    list.append(
+      el('div', { class: 'detail-item' }, [
+        el('dt', { text: label }),
+        el('dd', { text: value ?? '' }),
+      ]),
+    );
   }
   return list;
 }
@@ -431,6 +443,7 @@ async function renderRunDetail(id, token) {
       ['Started', formatDateTime(run.started_at)],
       ['Boundaries calculated', formatDateTime(run.boundaries_calculated_at)],
       ['Completed', formatDateTime(run.completed_at)],
+      ['Cancelled', formatDateTime(run.cancelled_at)],
       ['Archived', formatDateTime(run.archived_at)],
     ]),
     el('h3', { class: 'section-title', text: 'SQL' }),
@@ -439,17 +452,30 @@ async function renderRunDetail(id, token) {
 
   const boundaryRows = boundaryPage.rows.map((row) =>
     el('tr', {}, [
-      cell(row.boundary_no, 'num'),
+      cell(
+        Number(row.boundary_no) < Number(run.total_chunks)
+          ? el('a', {
+              class: 'run-link',
+              href: `#/runs/${run.run_id}/chunks/${row.boundary_no}`,
+              text: String(row.boundary_no),
+            })
+          : el('span', {
+              text: String(row.boundary_no),
+              title: 'Terminal high-water boundary; there is no chunk to explain.',
+            }),
+        'num',
+      ),
       cell(formatKey(row), 'mono'),
       el('td', {}, [badge(row.state)]),
       cell(formatDateTime(row.started_at)),
       cell(formatDateTime(row.completed_at)),
+      cell(formatDateTime(row.cancelled_at)),
     ]),
   );
   const boundariesSection = el('section', { class: 'panel' }, [
     el('h3', { class: 'section-title', text: `Boundaries (${boundaryPage.completed} completed)` }),
     el('div', { class: 'table-wrap' }, [
-      table(['#', 'Key', 'State', 'Started', 'Completed'], boundaryRows),
+      table(['#', 'Key', 'State', 'Started', 'Completed', 'Cancelled'], boundaryRows),
     ]),
     boundaryPage.total === 0
       ? el('p', { class: 'empty', text: 'No boundaries for this run.' })
@@ -458,6 +484,12 @@ async function renderRunDetail(id, token) {
           if (pageSize) state.boundaries.pageSize = pageSize;
           reload();
         }),
+    run.total_chunks > 0
+      ? el('p', {
+          class: 'empty',
+          text: 'Select a chunk number to view its details and EXPLAIN plan.',
+        })
+      : '',
   ]);
 
   const errorRows = errorPage.rows.map((row) =>
@@ -490,7 +522,202 @@ async function renderRunDetail(id, token) {
   elements.view.replaceChildren(summary, boundariesSection, errorsSection);
 }
 
+const PLAN_LABELS = {
+  chunk_non_final: 'Chunk (non-final)',
+  chunk_final: 'Chunk (final)',
+  boundary_population: 'Boundary population',
+};
+
+function planLabel(kind) {
+  return PLAN_LABELS[kind] ?? kind ?? 'Plan';
+}
+
+function parsePlan(value) {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
+
+function planDocument(value) {
+  const parsed = parsePlan(value);
+  const first = Array.isArray(parsed) ? parsed[0] : parsed;
+  return first && typeof first === 'object' ? first : null;
+}
+
+const PLAN_DETAIL_FIELDS = [
+  ['Relation', 'Relation Name'],
+  ['Schema', 'Schema'],
+  ['Alias', 'Alias'],
+  ['Index', 'Index Name'],
+  ['Filter', 'Filter'],
+  ['Index condition', 'Index Cond'],
+  ['Hash condition', 'Hash Cond'],
+  ['Join filter', 'Join Filter'],
+  ['Merge condition', 'Merge Cond'],
+  ['Recheck condition', 'Recheck Cond'],
+  ['Sort key', 'Sort Key'],
+  ['Group key', 'Group Key'],
+  ['Rows removed by filter', 'Rows Removed by Filter'],
+  ['Heap fetches', 'Heap Fetches'],
+  ['Workers planned', 'Workers Planned'],
+  ['Workers launched', 'Workers Launched'],
+];
+
+/** Renders one EXPLAIN JSON plan node and its children as an indented tree. */
+function planNode(node) {
+  const title = [
+    node['Node Type'],
+    node['Join Type'],
+    node['Relation Name'] ? `on ${node['Relation Name']}` : '',
+    node['Index Name'] ? `using ${node['Index Name']}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const metrics = [];
+  if (node['Startup Cost'] !== undefined && node['Total Cost'] !== undefined) {
+    metrics.push(`cost ${node['Startup Cost']}..${node['Total Cost']}`);
+  }
+  if (node['Plan Rows'] !== undefined) metrics.push(`rows ${node['Plan Rows']}`);
+  if (node['Plan Width'] !== undefined) metrics.push(`width ${node['Plan Width']}`);
+  if (node['Actual Total Time'] !== undefined) {
+    metrics.push(`actual ${node['Actual Total Time']} ms`);
+  }
+  if (node['Actual Rows'] !== undefined) metrics.push(`actual rows ${node['Actual Rows']}`);
+  if (node['Actual Loops'] !== undefined) metrics.push(`loops ${node['Actual Loops']}`);
+  const details = PLAN_DETAIL_FIELDS.filter(
+    ([, key]) => node[key] !== undefined && node[key] !== null,
+  );
+  const children = Array.isArray(node.Plans) ? node.Plans.map((child) => planNode(child)) : [];
+
+  return el('div', { class: 'plan-node' }, [
+    el('div', { class: 'plan-node-head' }, [
+      el('span', { class: 'plan-node-type', text: title || 'Plan' }),
+      metrics.length ? el('span', { class: 'plan-node-meta', text: metrics.join(' · ') }) : '',
+    ]),
+    details.length
+      ? el(
+          'dl',
+          { class: 'plan-node-details' },
+          details.flatMap(([label, key]) => [
+            el('dt', { text: label }),
+            el('dd', { text: String(node[key]) }),
+          ]),
+        )
+      : '',
+    children.length ? el('div', { class: 'plan-children' }, children) : '',
+  ]);
+}
+
+function planText(value) {
+  const parsed = parsePlan(value) ?? value;
+  if (typeof parsed === 'string') return parsed;
+  return JSON.stringify(parsed, null, 2) ?? String(parsed);
+}
+
+function planView(value) {
+  const document = planDocument(value);
+  if (document === null || document.Plan === undefined) {
+    return el('pre', { class: 'sql-text', text: planText(value) });
+  }
+  const timing = [];
+  if (document['Planning Time'] !== undefined) {
+    timing.push(`Planning ${document['Planning Time']} ms`);
+  }
+  if (document['Execution Time'] !== undefined) {
+    timing.push(`Execution ${document['Execution Time']} ms`);
+  }
+  return el('div', { class: 'plan' }, [
+    timing.length ? el('p', { class: 'plan-timing', text: timing.join(' · ') }) : '',
+    planNode(document.Plan),
+    el('details', { class: 'plan-raw' }, [
+      el('summary', { text: 'Raw JSON' }),
+      el('pre', { class: 'sql-text', text: planText(value) }),
+    ]),
+  ]);
+}
+
+function plansSection(rows, planError, planErrorCode, planScope) {
+  const section = el('section', { class: 'panel' }, [
+    el('h3', { class: 'section-title', text: 'EXPLAIN plan' }),
+  ]);
+  if (planError) {
+    section.append(
+      el('p', {
+        class: 'empty',
+        text: `Plan unavailable: ${planError}${planErrorCode ? ` (SQLSTATE ${planErrorCode})` : ''}`,
+      }),
+    );
+    return section;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    section.append(el('p', { class: 'empty', text: 'No plan returned.' }));
+    return section;
+  }
+  if (planScope === 'representative') {
+    section.append(
+      el('p', {
+        class: 'plan-note',
+        text: 'Representative plans for a blocks-strategy run: block chunks are physical ctid ranges, so these plans use synthetic ranges.',
+      }),
+    );
+  }
+  for (const row of rows) {
+    section.append(
+      el('div', { class: 'plan-block' }, [
+        el('h4', { class: 'plan-title', text: planLabel(row.o_plan_kind) }),
+        el('details', {}, [
+          el('summary', { text: 'SQL' }),
+          el('pre', { class: 'sql-text', text: row.o_sql_text }),
+        ]),
+        planView(row.o_plan),
+      ]),
+    );
+  }
+  return section;
+}
+
+async function renderChunkDetail(runId, boundaryNo, token) {
+  const detail = await api(`${API.runs}/${runId}/chunks/${boundaryNo}`);
+  const { run, boundary, plan, planError, planErrorCode, planScope } = detail;
+  const isBlocks = run.chunk_by === 'blocks';
+  const summary = el('section', { class: 'panel' }, [
+    el('p', {}, [
+      el('a', { class: 'run-link', href: `#/runs/${run.run_id}`, text: `← Run ${run.run_id}` }),
+    ]),
+    el('h2', { class: 'section-title' }, [
+      el('span', { text: `Chunk ${boundary.boundary_no} · ${run.label} ` }),
+      badge(boundary.state),
+    ]),
+    detailList([
+      ['Run', run.run_id],
+      ['Run state', run.state],
+      ['Run cancelled', formatDateTime(run.cancelled_at)],
+      ['Strategy', run.chunk_by],
+      ['Chunk size', run.chunk_size],
+      ['Driving table', `${run.driving_table_schema_name}.${run.driving_table_name}`],
+      ['Alias', run.driving_table_alias],
+      [isBlocks ? 'Start block' : 'Start key', formatKey(boundary)],
+      [isBlocks ? 'End block' : 'End key', formatKey(boundary, 'next_')],
+      ['Started', formatDateTime(boundary.started_at)],
+      ['Completed', formatDateTime(boundary.completed_at)],
+      ['Cancelled', formatDateTime(boundary.cancelled_at)],
+    ]),
+  ]);
+
+  if (token !== renderToken) return;
+  elements.view.replaceChildren(summary, plansSection(plan, planError, planErrorCode, planScope));
+}
+
 async function renderRunsView(rest, token) {
+  if (rest.length >= 3 && rest[1] === 'chunks') {
+    await renderChunkDetail(rest[0], rest[2], token);
+    return;
+  }
   if (rest.length > 0) {
     await renderRunDetail(rest[0], token);
     return;

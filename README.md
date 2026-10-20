@@ -3,11 +3,14 @@
 A small web application to browse the `dml_utils_data` migration tables in a
 PostgreSQL database:
 
-- **Runs** — one row per migration run (`migration_run`), with its progress and
-  state, filterable and sortable. Click a run to see its detail.
+- **Runs** — one row per migration run (`migration_run`), with its progress,
+  cancellation and state, filterable and sortable. Click a run to see its detail.
 - **Run detail** — the run's configuration, the migration SQL, its chunk
   boundaries (`migration_boundary`) and the failures its chunks recorded
   (`migration_error`).
+- **Chunk detail** — one boundary, its start/end key, and the `EXPLAIN` plan for
+  the chunk. If the plan cannot be produced (for example the driving table was
+  dropped), the rest of the chunk page still renders.
 - **Errors** — every recorded chunk failure (`migration_error`), across runs.
 
 It is **read-only**. The UI is plain HTML/CSS/ES modules — there is no build
@@ -86,14 +89,15 @@ VIEWER_DB_PASSWORD=postgres npm test
 
 ## HTTP API
 
-| Method | Path                       | Description                                             |
-| ------ | -------------------------- | ------------------------------------------------------- |
-| GET    | `/api/config`              | Display target and page-size settings (no credentials). |
-| GET    | `/api/runs`                | Paginated migration runs.                               |
-| GET    | `/api/runs/:id`            | One run and its counts.                                 |
-| GET    | `/api/runs/:id/boundaries` | Paginated boundaries of a run.                          |
-| GET    | `/api/runs/:id/errors`     | Errors recorded for a run.                              |
-| GET    | `/api/errors`              | Paginated errors across runs.                           |
+| Method | Path                               | Description                                             |
+| ------ | ---------------------------------- | ------------------------------------------------------- |
+| GET    | `/api/config`                      | Display target and page-size settings (no credentials). |
+| GET    | `/api/runs`                        | Paginated migration runs.                               |
+| GET    | `/api/runs/:id`                    | One run and its counts.                                 |
+| GET    | `/api/runs/:id/boundaries`         | Paginated boundaries of a run.                          |
+| GET    | `/api/runs/:id/chunks/:boundaryNo` | One chunk, its next boundary, and its EXPLAIN plan.     |
+| GET    | `/api/runs/:id/errors`             | Errors recorded for a run.                              |
+| GET    | `/api/errors`                      | Paginated errors across runs.                           |
 
 ## Security notes
 
@@ -101,5 +105,8 @@ VIEWER_DB_PASSWORD=postgres npm test
   `database.passwordEnv`; it is never written to disk.
 - Schema names from the config or the query are validated and quoted; filter
   values are bound parameters.
+- The chunk plan is produced with `EXPLAIN` (without `ANALYZE`), so it plans the
+  recorded SQL but does not execute it. Explain errors are returned as data on
+  the chunk response, not as a server error.
 - The server binds to `127.0.0.1` by default. Exposing it beyond localhost is at
   your own risk — there is no authentication.
