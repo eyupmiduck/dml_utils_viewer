@@ -37,6 +37,7 @@ test('lists a page of runs with a derived state', { skip }, async () => {
     for (const row of page.rows) {
       assert.ok(row.run_id);
       assert.ok(STATES.includes(row.state), `unexpected state ${row.state}`);
+      assert.ok('sleep_ms' in row, 'the run list should include the sleep throttle');
     }
   });
 });
@@ -60,6 +61,7 @@ test('reads a run with its counts, and null for a missing run', { skip }, async 
     const detail = await getRun(pool, config, runId);
     assert.equal(detail.run.run_id, runId);
     assert.ok(STATES.includes(detail.run.state));
+    assert.ok('sleep_ms' in detail.run, 'the run detail should include the sleep throttle');
     assert.ok(detail.counts.boundaries >= 0);
     assert.ok(detail.counts.boundaries_completed >= 0);
     assert.ok(detail.counts.errors >= 0);
