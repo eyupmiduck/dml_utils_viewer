@@ -4,13 +4,15 @@ A small web application to browse the `dml_utils_data` migration tables in a
 PostgreSQL database:
 
 - **Runs** — one row per migration run (`migration_run`), with its progress,
-  cancellation and state, filterable and sortable. Click a run to see its detail.
-- **Run detail** — the run's configuration, the migration SQL, its chunk
-  boundaries (`migration_boundary`) and the failures its chunks recorded
-  (`migration_error`).
-- **Chunk detail** — one boundary, its start/end key, and the `EXPLAIN` plan for
-  the chunk. If the plan cannot be produced (for example the driving table was
-  dropped), the rest of the chunk page still renders.
+  cancellation, state, and per-chunk sleep throttle, filterable and sortable.
+  Click a run to see its detail.
+- **Run detail** — the run's configuration (including its sleep throttle), the
+  migration SQL, its chunk boundaries (`migration_boundary`) and the failures
+  its chunks recorded (`migration_error`).
+- **Chunk detail** — one boundary, its start/end key, the run's sleep throttle,
+  and the `EXPLAIN` plan for the chunk. If the plan cannot be produced (for
+  example the driving table was dropped), the rest of the chunk page still
+  renders.
 - **Errors** — every recorded chunk failure (`migration_error`), across runs.
 
 It is **read-only**. The UI is plain HTML/CSS/ES modules — there is no build

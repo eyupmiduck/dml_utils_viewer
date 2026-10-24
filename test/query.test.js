@@ -17,6 +17,7 @@ test('the run detail adds the sql text and relation filepath to the list columns
   assert.ok(RUN_DETAIL_COLUMNS.includes('sql_text'));
   assert.ok(RUN_DETAIL_COLUMNS.includes('driving_table_relation_filepath'));
   assert.ok(RUN_COLUMNS.includes('cancelled_at'));
+  assert.ok(RUN_COLUMNS.includes('sleep_ms'));
   for (const column of RUN_COLUMNS) {
     assert.ok(RUN_DETAIL_COLUMNS.includes(column));
   }

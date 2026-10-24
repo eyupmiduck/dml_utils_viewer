@@ -16,6 +16,7 @@ export const RUN_COLUMNS = [
   'chunk_by',
   'chunk_size',
   'threads',
+  'sleep_ms',
   'driving_table_schema_name',
   'driving_table_name',
   'driving_table_alias',
