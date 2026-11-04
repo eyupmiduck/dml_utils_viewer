@@ -7,8 +7,10 @@ import {
   buildBoundariesQuery,
   buildChunkQuery,
   buildErrorsQuery,
+  buildLeavesQuery,
   buildRunsQuery,
   CHUNK_COLUMNS,
+  LEAF_COLUMNS,
   RUN_COLUMNS,
   RUN_DETAIL_COLUMNS,
 } from '../src/query.js';
@@ -18,6 +20,10 @@ test('the run detail adds the sql text and relation filepath to the list columns
   assert.ok(RUN_DETAIL_COLUMNS.includes('driving_table_relation_filepath'));
   assert.ok(RUN_COLUMNS.includes('cancelled_at'));
   assert.ok(RUN_COLUMNS.includes('sleep_ms'));
+  assert.ok(RUN_COLUMNS.includes('partition_wise'));
+  for (const column of ['ordered_key_index', 'ordered_key_columns', 'ordered_key_kinds']) {
+    assert.ok(RUN_DETAIL_COLUMNS.includes(column));
+  }
   for (const column of RUN_COLUMNS) {
     assert.ok(RUN_DETAIL_COLUMNS.includes(column));
   }
@@ -50,7 +56,7 @@ test('filters by label as a contains match', () => {
 
 test('filters by chunk_by and state', () => {
   const query = buildRunsQuery(DEFAULT_CONFIG, {
-    filters: { chunk_by: 'blocks', state: 'running' },
+    filters: { chunk_by: 'ordered_key', state: 'running' },
   });
 
   assert.match(query.rowsSql, /chunk_by = \$1::dml_utils_data\.chunking_strategy/);
@@ -58,7 +64,7 @@ test('filters by chunk_by and state', () => {
     query.rowsSql,
     /archived_at IS NULL AND started_at IS NOT NULL AND completed_at IS NULL AND cancelled_at IS NULL/,
   );
-  assert.deepEqual(query.countValues, ['blocks']);
+  assert.deepEqual(query.countValues, ['ordered_key']);
 });
 
 test('filters cancelled and pending runs consistently with the state', () => {
@@ -130,6 +136,8 @@ test('builds the boundaries query for a run with a state filter', () => {
 
   assert.match(query.rowsSql, /FROM "dml_utils_data"\."migration_boundary"/);
   assert.match(query.rowsSql, /\(boundary_id\)\.bigint_values/);
+  assert.match(query.rowsSql, /\(boundary_id\)\.timestamptz_values/);
+  assert.match(query.rowsSql, /leaf_ordinal/);
   assert.match(query.rowsSql, /cancelled_at/);
   assert.match(query.rowsSql, /AS is_chunk/);
   assert.match(query.rowsSql, /WHERE run_id = \$1 AND completed_at IS NOT NULL/);
@@ -150,6 +158,22 @@ test('builds the chunk query with the next boundary and its state', () => {
   assert.deepEqual(query.rowsValues, ['42', '3']);
   assert.ok(BOUNDARY_COLUMNS.includes('cancelled_at'));
   assert.ok(CHUNK_COLUMNS.some((column) => column.includes('next_bigint_values')));
+  assert.ok(CHUNK_COLUMNS.some((column) => column.includes('next_leaf_ordinal')));
+  assert.ok(CHUNK_COLUMNS.includes('b.leaf_ordinal'));
+});
+
+test('builds the leaf manifest query for a run', () => {
+  const query = buildLeavesQuery(DEFAULT_CONFIG, '42', { page: 2, pageSize: 10 });
+
+  assert.match(query.rowsSql, /FROM "dml_utils_data"."migration_run_leaf"/);
+  assert.match(query.rowsSql, /WHERE run_id = \$1/);
+  assert.match(query.rowsSql, /ORDER BY leaf_ordinal ASC/);
+  assert.match(query.rowsSql, /LIMIT \$2 OFFSET \$3/);
+  assert.deepEqual(query.rowsValues, ['42', 10, 10]);
+  assert.deepEqual(query.countValues, ['42']);
+  for (const column of LEAF_COLUMNS) {
+    assert.match(query.rowsSql, new RegExp(`\\b${column}\\b`));
+  }
 });
 
 test('builds the errors query across runs with filters', () => {

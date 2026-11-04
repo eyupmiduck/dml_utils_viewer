@@ -3,7 +3,14 @@ import test from 'node:test';
 
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/db.js';
-import { getChunk, getRun, listBoundaries, listErrors, listRuns } from '../src/repository.js';
+import {
+  getChunk,
+  getRun,
+  listBoundaries,
+  listErrors,
+  listLeaves,
+  listRuns,
+} from '../src/repository.js';
 
 // These tests need a real database (the local dml_utils one by default). They
 // are skipped unless the password environment variable is set.
@@ -38,6 +45,7 @@ test('lists a page of runs with a derived state', { skip }, async () => {
       assert.ok(row.run_id);
       assert.ok(STATES.includes(row.state), `unexpected state ${row.state}`);
       assert.ok('sleep_ms' in row, 'the run list should include the sleep throttle');
+      assert.ok('partition_wise' in row, 'the run list should include the partition-wise flag');
     }
   });
 });
@@ -62,9 +70,19 @@ test('reads a run with its counts, and null for a missing run', { skip }, async 
     assert.equal(detail.run.run_id, runId);
     assert.ok(STATES.includes(detail.run.state));
     assert.ok('sleep_ms' in detail.run, 'the run detail should include the sleep throttle');
+    assert.ok(
+      'partition_wise' in detail.run,
+      'the run detail should include the partition-wise flag',
+    );
+    assert.ok(
+      'ordered_key_columns' in detail.run,
+      'the run detail should include the ordered-key descriptor',
+    );
     assert.ok(detail.counts.boundaries >= 0);
     assert.ok(detail.counts.boundaries_completed >= 0);
     assert.ok(detail.counts.errors >= 0);
+    assert.ok(detail.counts.leaves >= 0);
+    assert.ok(detail.counts.leaves_calculated >= 0);
 
     assert.equal(await getRun(pool, config, '999999999999'), null);
   });
@@ -84,7 +102,33 @@ test("lists a page of a run's boundaries", { skip }, async () => {
       assert.ok(['pending', 'running', 'completed', 'cancelled'].includes(row.state));
       assert.equal(typeof row.is_chunk, 'boolean');
       // The migration_key value arrays are selected for rendering.
-      assert.ok('bigint_values' in row && 'text_values' in row && 'uuid_values' in row);
+      assert.ok(
+        'bigint_values' in row &&
+          'text_values' in row &&
+          'uuid_values' in row &&
+          'timestamptz_values' in row,
+      );
+      assert.ok('leaf_ordinal' in row, 'the boundary should include its leaf ordinal');
+    }
+  });
+});
+
+test("lists a partition-wise run's leaf manifest", { skip }, async () => {
+  await withPool(async (config, pool) => {
+    const page = await listRuns(pool, config, { page: 1, pageSize: config.server.maxPageSize });
+    const partitioned = page.rows.find((row) => row.partition_wise);
+    if (partitioned === undefined) return; // no partition-wise run in this database
+
+    const leaves = await listLeaves(pool, config, partitioned.run_id, {
+      page: 1,
+      pageSize: 10,
+    });
+    assert.ok(leaves.total >= leaves.rows.length);
+    for (const leaf of leaves.rows) {
+      assert.ok(leaf.leaf_ordinal >= 1);
+      assert.ok(leaf.leaf_schema_name);
+      assert.ok(leaf.leaf_name);
+      assert.ok(['pending', 'calculating', 'calculated', 'failed'].includes(leaf.state));
     }
   });
 });
@@ -115,6 +159,7 @@ test('reads a chunk with its explain plan, or a plan error and its details', { s
 
     assert.equal(String(chunk.boundary.boundary_no), '0');
     assert.ok('cancelled_at' in chunk.boundary);
+    assert.ok('leaf_ordinal' in chunk.boundary);
     assert.ok(['chunk', 'representative'].includes(chunk.planScope));
     assert.ok(Array.isArray(chunk.plan));
     if (chunk.planError) {

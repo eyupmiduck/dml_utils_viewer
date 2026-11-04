@@ -3,6 +3,7 @@ import {
   buildBoundariesQuery,
   buildChunkQuery,
   buildErrorsQuery,
+  buildLeavesQuery,
   buildRunsQuery,
   RUN_DETAIL_COLUMNS,
   RUN_STATE_EXPRESSION,
@@ -15,7 +16,9 @@ import {
 //   i_driving_table_alias)
 const EXPLAIN_CHUNK_SQL = `
   SELECT o_plan_kind, o_sql_text, o_plan
-  FROM dml_utils.explain_migration_chunk($1, $2, $3, $4::text[], $5::text[], $6, $7)`;
+  FROM dml_utils.explain_migration_chunk(
+    $1, $2, $3, $4::text[], $5::text[], $6, $7,
+    $8::dml_utils_data.chunking_strategy, $9)`;
 
 // dml_utils.explain_migration_chunks(
 //   i_sql_text, i_driving_table_schema_name, i_driving_table_name,
@@ -28,7 +31,8 @@ const EXPLAIN_CHUNKS_SQL = `
     $3,
     $4::dml_utils_data.positive_integer,
     $5,
-    $6::dml_utils_data.chunking_strategy)`;
+    $6::dml_utils_data.chunking_strategy,
+    $7)`;
 
 // Runs a page query (rows + count) and assembles the pagination envelope.
 async function paginate(pool, query, extra = () => ({})) {
@@ -94,10 +98,13 @@ export async function getRun(pool, config, runId) {
 
   const boundaryTable = qualifyName(config.schema, TABLES.boundary);
   const errorTable = qualifyName(config.schema, TABLES.error);
+  const leafTable = qualifyName(config.schema, TABLES.leaf);
   const countsResult = await pool.query(
     `SELECT (SELECT count(*)::int FROM ${boundaryTable} WHERE run_id = $1) AS boundaries,
             (SELECT count(completed_at)::int FROM ${boundaryTable} WHERE run_id = $1) AS boundaries_completed,
-            (SELECT count(*)::int FROM ${errorTable} WHERE run_id = $1) AS errors`,
+            (SELECT count(*)::int FROM ${errorTable} WHERE run_id = $1) AS errors,
+            (SELECT count(*)::int FROM ${leafTable} WHERE run_id = $1) AS leaves,
+            (SELECT count(*)::int FROM ${leafTable} WHERE run_id = $1 AND state = 'calculated') AS leaves_calculated`,
     [runId],
   );
 
@@ -132,6 +139,19 @@ export async function listErrors(pool, config, params = {}) {
 }
 
 /**
+ * Reads one page of a partition-wise run's leaf manifest.
+ *
+ * @param {import('pg').Pool} pool the connection pool
+ * @param {object} config the application configuration
+ * @param {string} runId the run id
+ * @param {object} [params] pagination values
+ * @returns {Promise<object>} the page
+ */
+export async function listLeaves(pool, config, runId, params = {}) {
+  return paginate(pool, buildLeavesQuery(config, runId, params));
+}
+
+/**
  * Flattens a boundary's position-aligned migration_key arrays into one text
  * value per primary-key column, in key order. `prefix` selects the next
  * boundary's aliases (`next_`) for a chunk's end key.
@@ -149,6 +169,7 @@ export function keyValues(row, prefix = '') {
     row[`${prefix}bigint_values`],
     row[`${prefix}text_values`],
     row[`${prefix}uuid_values`],
+    row[`${prefix}timestamptz_values`],
   ];
   const length = arrays.reduce(
     (max, values) => Math.max(max, Array.isArray(values) ? values.length : 0),
@@ -165,6 +186,62 @@ export function keyValues(row, prefix = '') {
     result.push(candidates.length === 1 ? String(candidates[0]) : null);
   }
   return result;
+}
+
+/**
+ * Reads one manifest leaf by its run ordinal.
+ *
+ * @param {import('pg').Pool} pool the connection pool
+ * @param {object} config the application configuration
+ * @param {string} runId the run id
+ * @param {number} leafOrdinal the leaf ordinal
+ * @returns {Promise<object|null>} the leaf row
+ */
+async function selectLeaf(pool, config, runId, leafOrdinal) {
+  const table = qualifyName(config.schema, TABLES.leaf);
+  const result = await pool.query(
+    `SELECT leaf_ordinal, leaf_schema_name, leaf_name, leaf_oid, leaf_bound,
+            relation_filepath, state, boundary_count, calculated_at,
+            error_sqlstate, error_message
+     FROM ${table}
+     WHERE run_id = $1 AND leaf_ordinal = $2`,
+    [runId, leafOrdinal],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Resolves the descendant index name for a storage leaf of a partitioned
+ * ordered key. The index inheritance tree mirrors the table tree, so a
+ * multi-level leaf's index is not a direct child of the root.
+ *
+ * @param {import('pg').Pool} pool the connection pool
+ * @param {object} config the application configuration
+ * @param {object} run the run row (with ordered_key_index)
+ * @param {object} leaf the manifest leaf row
+ * @returns {Promise<string|null>} the child index name
+ */
+async function leafIndexName(pool, config, run, leaf) {
+  const parentIndex = qualifyName(run.driving_table_schema_name, run.ordered_key_index);
+  const result = await pool.query(
+    `WITH RECURSIVE index_tree AS (
+       SELECT inh.inhrelid
+       FROM pg_catalog.pg_inherits AS inh
+       WHERE inh.inhparent = pg_catalog.to_regclass($1)
+       UNION ALL
+       SELECT inh.inhrelid
+       FROM pg_catalog.pg_inherits AS inh
+       JOIN index_tree AS tree ON inh.inhparent = tree.inhrelid
+     )
+     SELECT ic.relname
+     FROM index_tree AS tree
+     JOIN pg_catalog.pg_index AS i ON i.indexrelid = tree.inhrelid
+     JOIN pg_catalog.pg_class AS ic ON ic.oid = tree.inhrelid
+     WHERE i.indrelid = $2
+     LIMIT 1`,
+    [parentIndex, leaf.leaf_oid],
+  );
+  return result.rows[0]?.relname ?? null;
 }
 
 /**
@@ -190,9 +267,11 @@ export async function getChunk(pool, config, runId, boundaryNo) {
   const boundary = boundaryResult.rows[0];
   const boundaryNumber = Number(boundary.boundary_no);
   const isBlocks = run.chunk_by === 'blocks';
+  const isPartitionWise = run.partition_wise === true;
   const base = {
     run,
     boundary,
+    leaf: null,
     plan: [],
     planError: null,
     planErrorCode: null,
@@ -218,14 +297,52 @@ export async function getChunk(pool, config, runId, boundaryNo) {
   }
 
   try {
+    let leaf = null;
+    let explainSchema = run.driving_table_schema_name;
+    let explainTable = run.driving_table_name;
+
+    // A partition-wise chunk rendered against its leaf, not the parent. The
+    // boundary records the leaf ordinal, and the manifest stores the leaf name
+    // that was snapshotted when the run was created.
+    if (isPartitionWise) {
+      leaf = await selectLeaf(pool, config, runId, boundary.leaf_ordinal);
+      if (leaf === null) {
+        return {
+          ...base,
+          planError:
+            'The boundary has no matching leaf in the run manifest; cannot explain this chunk.',
+        };
+      }
+      base.leaf = leaf;
+      explainSchema = leaf.leaf_schema_name;
+      explainTable = leaf.leaf_name;
+    }
+
+    // explain_migration_chunk resolves the key from the driving table. A
+    // partition-wise ordered key is on the parent, so the leaf's matching child
+    // index is resolved through the index inheritance tree.
+    let explainIndex = null;
+    if (run.chunk_by === 'ordered_key') {
+      explainIndex = isPartitionWise
+        ? await leafIndexName(pool, config, run, leaf)
+        : run.ordered_key_index;
+      if (!explainIndex) {
+        return {
+          ...base,
+          planError: 'The ordered-key index for this chunk could not be resolved.',
+        };
+      }
+    }
+
     if (isBlocks) {
       const result = await pool.query(EXPLAIN_CHUNKS_SQL, [
         run.sql_text,
-        run.driving_table_schema_name,
-        run.driving_table_name,
+        explainSchema,
+        explainTable,
         run.chunk_size,
         run.driving_table_alias,
         run.chunk_by,
+        explainIndex,
       ]);
       return { ...base, plan: result.rows };
     }
@@ -241,15 +358,19 @@ export async function getChunk(pool, config, runId, boundaryNo) {
     }
 
     const totalChunks = Number(run.total_chunks);
-    const isFinal = boundaryNumber + 1 === totalChunks;
+    const isFinal = isPartitionWise
+      ? boundary.next_leaf_ordinal !== boundary.leaf_ordinal || boundaryNumber + 1 === totalChunks
+      : boundaryNumber + 1 === totalChunks;
     const result = await pool.query(EXPLAIN_CHUNK_SQL, [
       run.sql_text,
-      run.driving_table_schema_name,
-      run.driving_table_name,
+      explainSchema,
+      explainTable,
       startValues,
       endValues,
       isFinal,
       run.driving_table_alias,
+      run.chunk_by,
+      explainIndex,
     ]);
     return { ...base, plan: result.rows };
   } catch (error) {

@@ -76,6 +76,18 @@ function formatNumber(value) {
   return value === null || value === undefined ? '' : String(value);
 }
 
+function strategyLabel(row) {
+  return row.partition_wise ? `${row.chunk_by} · partitioned` : row.chunk_by;
+}
+
+function orderedKeyLabel(run) {
+  if (run.chunk_by !== 'ordered_key') return '';
+  const columns = Array.isArray(run.ordered_key_columns)
+    ? run.ordered_key_columns.join(', ')
+    : run.ordered_key_columns;
+  return columns ?? '';
+}
+
 function cell(value, className) {
   const td = el('td', { class: className });
   if (value instanceof Node) {
@@ -276,6 +288,7 @@ async function renderRuns(token) {
         [
           ['', 'Any'],
           ['primary_key', 'primary_key'],
+          ['ordered_key', 'ordered_key'],
           ['blocks', 'blocks'],
         ],
         runs.filters.chunk_by,
@@ -352,7 +365,7 @@ async function renderRuns(token) {
         'num',
       ),
       cell(row.label),
-      cell(row.chunk_by, 'mono'),
+      cell(strategyLabel(row), 'mono'),
       cell(formatNumber(row.chunk_size), 'num'),
       cell(formatNumber(row.threads), 'num'),
       cell(formatNumber(row.sleep_ms), 'num'),
@@ -383,6 +396,7 @@ function formatKey(row, prefix = '') {
     row[`${prefix}bigint_values`],
     row[`${prefix}text_values`],
     row[`${prefix}uuid_values`],
+    row[`${prefix}timestamptz_values`],
   ];
   const length = arrays.reduce((max, array) => Math.max(max, array?.length ?? 0), 0);
   const parts = [];
@@ -423,6 +437,9 @@ async function renderRunDetail(id, token) {
   ]);
 
   const { run, counts } = detail;
+  const leafPage = run.partition_wise
+    ? await api(`${API.runs}/${id}/leaves?page=1&pageSize=${state.maxPageSize}`)
+    : null;
   const reload = () => renderRunDetail(id, token).then(clearError).catch(showError);
 
   const summary = el('section', { class: 'panel' }, [
@@ -432,7 +449,10 @@ async function renderRunDetail(id, token) {
       badge(run.state),
     ]),
     detailList([
-      ['Strategy', run.chunk_by],
+      ['Strategy', strategyLabel(run)],
+      ['Partition-wise', run.partition_wise ? 'yes' : 'no'],
+      ['Ordered key index', run.ordered_key_index],
+      ['Ordered key', orderedKeyLabel(run)],
       ['Chunk size', run.chunk_size],
       ['Threads', run.threads],
       ['Sleep (ms)', run.sleep_ms],
@@ -441,6 +461,7 @@ async function renderRunDetail(id, token) {
       ['Relation filepath', run.driving_table_relation_filepath],
       ['Chunks', `${run.total_chunks_completed}/${run.total_chunks}`],
       ['Boundaries', `${counts.boundaries_completed}/${counts.boundaries}`],
+      ['Leaves', `${counts.leaves_calculated}/${counts.leaves}`],
       ['Errors', counts.errors],
       ['Created', formatDateTime(run.created_at)],
       ['Started', formatDateTime(run.started_at)],
@@ -469,6 +490,7 @@ async function renderRunDetail(id, token) {
         'num',
       ),
       cell(formatKey(row), 'mono'),
+      cell(row.leaf_ordinal, 'num'),
       el('td', {}, [badge(row.state)]),
       cell(formatDateTime(row.started_at)),
       cell(formatDateTime(row.completed_at)),
@@ -478,7 +500,7 @@ async function renderRunDetail(id, token) {
   const boundariesSection = el('section', { class: 'panel' }, [
     el('h3', { class: 'section-title', text: `Boundaries (${boundaryPage.completed} completed)` }),
     el('div', { class: 'table-wrap' }, [
-      table(['#', 'Key', 'State', 'Started', 'Completed', 'Cancelled'], boundaryRows),
+      table(['#', 'Key', 'Leaf', 'State', 'Started', 'Completed', 'Cancelled'], boundaryRows),
     ]),
     boundaryPage.total === 0
       ? el('p', { class: 'empty', text: 'No boundaries for this run.' })
@@ -494,6 +516,39 @@ async function renderRunDetail(id, token) {
         })
       : '',
   ]);
+
+  const leavesSection = leafPage
+    ? el('section', { class: 'panel' }, [
+        el('h3', { class: 'section-title', text: `Leaf manifest (${leafPage.total})` }),
+        leafPage.total === 0
+          ? el('p', { class: 'empty', text: 'No leaves in this run.' })
+          : el('div', { class: 'table-wrap' }, [
+              table(
+                ['#', 'Leaf', 'State', 'Boundaries', 'Calculated', 'Error'],
+                leafPage.rows.map((leaf) =>
+                  el('tr', {}, [
+                    cell(leaf.leaf_ordinal, 'num'),
+                    cell(`${leaf.leaf_schema_name}.${leaf.leaf_name}`, 'mono'),
+                    el('td', {}, [badge(leaf.state)]),
+                    cell(formatNumber(leaf.boundary_count), 'num'),
+                    cell(formatDateTime(leaf.calculated_at)),
+                    cell(
+                      leaf.error_sqlstate
+                        ? `${leaf.error_sqlstate}: ${leaf.error_message ?? ''}`
+                        : '',
+                    ),
+                  ]),
+                ),
+              ),
+            ]),
+        leafPage.total > leafPage.rows.length
+          ? el('p', {
+              class: 'empty',
+              text: `Showing the first ${leafPage.rows.length} of ${leafPage.total} leaves.`,
+            })
+          : '',
+      ])
+    : null;
 
   const errorRows = errorPage.rows.map((row) =>
     el('tr', {}, [
@@ -522,7 +577,9 @@ async function renderRunDetail(id, token) {
   ]);
 
   if (token !== renderToken) return;
-  elements.view.replaceChildren(summary, boundariesSection, errorsSection);
+  elements.view.replaceChildren(
+    ...[summary, leavesSection, boundariesSection, errorsSection].filter(Boolean),
+  );
 }
 
 const PLAN_LABELS = {
@@ -701,7 +758,14 @@ async function renderChunkDetail(runId, boundaryNo, token) {
       ['Run', run.run_id],
       ['Run state', run.state],
       ['Run cancelled', formatDateTime(run.cancelled_at)],
-      ['Strategy', run.chunk_by],
+      ['Strategy', strategyLabel(run)],
+      ['Partition-wise', run.partition_wise ? 'yes' : 'no'],
+      [
+        'Leaf',
+        detail.leaf
+          ? `${detail.leaf.leaf_schema_name}.${detail.leaf.leaf_name} (#${boundary.leaf_ordinal})`
+          : '',
+      ],
       ['Chunk size', run.chunk_size],
       ['Sleep (ms)', run.sleep_ms],
       ['Driving table', `${run.driving_table_schema_name}.${run.driving_table_name}`],

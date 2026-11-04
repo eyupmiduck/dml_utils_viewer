@@ -19,7 +19,7 @@ database:
   ssl: false
 
 # The schema holding the migration tables (migration_run, migration_boundary,
-# migration_error). dml_utils keeps them in a dedicated data schema.
+# migration_run_leaf, migration_error). dml_utils keeps them in a dedicated data schema.
 schema: dml_utils_data
 
 server:
