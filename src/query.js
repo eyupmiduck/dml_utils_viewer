@@ -7,6 +7,7 @@ export const TABLES = Object.freeze({
   run: 'migration_run',
   boundary: 'migration_boundary',
   error: 'migration_error',
+  leaf: 'migration_run_leaf',
 });
 
 /** migration_run columns returned to the UI, in display order. */
@@ -14,6 +15,7 @@ export const RUN_COLUMNS = [
   'run_id',
   'label',
   'chunk_by',
+  'partition_wise',
   'chunk_size',
   'threads',
   'sleep_ms',
@@ -30,9 +32,17 @@ export const RUN_COLUMNS = [
   'archived_at',
 ];
 
-// The run detail additionally returns the (potentially large) SQL text and the
-// block-chunking filepath, which the list does not need.
-export const RUN_DETAIL_COLUMNS = [...RUN_COLUMNS, 'sql_text', 'driving_table_relation_filepath'];
+// The run detail additionally returns the (potentially large) SQL text, the
+// block-chunking filepath and the ordered-key descriptor, which the list does
+// not need.
+export const RUN_DETAIL_COLUMNS = [
+  ...RUN_COLUMNS,
+  'sql_text',
+  'driving_table_relation_filepath',
+  'ordered_key_index',
+  'ordered_key_columns',
+  'ordered_key_kinds',
+];
 
 // The run's derived state, from its timestamps. Archived wins, then completed,
 // then cancelled, then a run that has started, otherwise it is still pending.
@@ -55,7 +65,7 @@ const STATE_FILTERS = {
 };
 
 // The chunking strategies the chunk_by domain allows.
-const CHUNK_BY = new Set(['primary_key', 'blocks']);
+const CHUNK_BY = new Set(['primary_key', 'ordered_key', 'blocks']);
 
 /** Columns a caller may sort by. */
 const SORTABLE_COLUMNS = new Set([
@@ -157,6 +167,7 @@ function keyColumns(prefix = '', aliasPrefix = '') {
     `(${prefix}boundary_id).bigint_values AS ${aliasPrefix}bigint_values`,
     `(${prefix}boundary_id).text_values AS ${aliasPrefix}text_values`,
     `(${prefix}boundary_id).uuid_values AS ${aliasPrefix}uuid_values`,
+    `(${prefix}boundary_id).timestamptz_values AS ${aliasPrefix}timestamptz_values`,
   ];
 }
 
@@ -169,6 +180,7 @@ function keyColumns(prefix = '', aliasPrefix = '') {
 export function boundaryColumns(prefix = '') {
   return [
     `${prefix}boundary_no`,
+    `${prefix}leaf_ordinal`,
     ...keyColumns(prefix),
     `${prefix}created_at`,
     `${prefix}started_at`,
@@ -261,6 +273,7 @@ export const CHUNK_COLUMNS = [
   ...boundaryColumns('b.'),
   ...keyColumns('nb.', 'next_'),
   'nb.boundary_no AS next_boundary_no',
+  'nb.leaf_ordinal AS next_leaf_ordinal',
 ];
 
 /**
@@ -281,6 +294,51 @@ export function buildChunkQuery(config, runId, boundaryNo) {
     ` WHERE b.run_id = $1 AND b.boundary_no = $2`;
 
   return { rowsSql, rowsValues: [runId, boundaryNo] };
+}
+
+/** migration_run_leaf columns returned to the UI, in display order. */
+export const LEAF_COLUMNS = [
+  'leaf_ordinal',
+  'leaf_schema_name',
+  'leaf_name',
+  'leaf_oid',
+  'leaf_bound',
+  'relation_filepath',
+  'state',
+  'boundary_count',
+  'calculated_at',
+  'error_sqlstate',
+  'error_message',
+  'created_at',
+  'updated_at',
+];
+
+/**
+ * Builds the paginated leaf-manifest query for one partition-wise run.
+ *
+ * @param {object} config the application configuration
+ * @param {string} runId the run id (a digit string, bound as a bigint)
+ * @param {object} [params] pagination values
+ * @returns {{rowsSql: string, countSql: string, rowsValues: unknown[], countValues: unknown[], page: number, pageSize: number}} the queries and resolved parameters
+ */
+export function buildLeavesQuery(config, runId, params = {}) {
+  const table = qualifyName(config.schema, TABLES.leaf);
+  const page = Math.max(1, Number.parseInt(params.page, 10) || 1);
+  const pageSize = clampPageSize(config, params.pageSize);
+  const offset = (page - 1) * pageSize;
+  const rowsSql =
+    `SELECT ${LEAF_COLUMNS.join(', ')} FROM ${table}` +
+    ` WHERE run_id = $1 ORDER BY leaf_ordinal ASC LIMIT $2 OFFSET $3`;
+  const countSql = `SELECT count(*)::int AS total FROM ${table} WHERE run_id = $1`;
+
+  return {
+    rowsSql,
+    countSql,
+    rowsValues: [runId, pageSize, offset],
+    countValues: [runId],
+    page,
+    pageSize,
+  };
 }
 
 /**

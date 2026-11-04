@@ -26,6 +26,19 @@ test('flattens a uuid key', () => {
   assert.deepEqual(keyValues({ bigint_values: null, text_values: null, uuid_values: [id] }), [id]);
 });
 
+test('flattens a timestamptz key', () => {
+  const at = '2026-01-01T00:00:00.000Z';
+  assert.deepEqual(
+    keyValues({
+      bigint_values: null,
+      text_values: null,
+      uuid_values: null,
+      timestamptz_values: [at],
+    }),
+    [at],
+  );
+});
+
 test('reads the next boundary key with the next_ prefix', () => {
   assert.deepEqual(
     keyValues(
@@ -48,6 +61,16 @@ test('returns an empty key when no arrays are present', () => {
 test('rejects a non-canonical key with values from multiple kinds', () => {
   assert.throws(
     () => keyValues({ bigint_values: ['1'], text_values: ['x'], uuid_values: null }),
+    /multiple values/,
+  );
+  assert.throws(
+    () =>
+      keyValues({
+        bigint_values: null,
+        text_values: null,
+        uuid_values: ['6f9619ff-8b86-d011-b42d-00c04fc964ff'],
+        timestamptz_values: ['2026-01-01T00:00:00.000Z'],
+      }),
     /multiple values/,
   );
 });

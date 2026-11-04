@@ -5,7 +5,14 @@ import express from 'express';
 
 import { ConfigError, loadConfig, parseArgs } from './config.js';
 import { createPool } from './db.js';
-import { getChunk, getRun, listBoundaries, listErrors, listRuns } from './repository.js';
+import {
+  getChunk,
+  getRun,
+  listBoundaries,
+  listErrors,
+  listLeaves,
+  listRuns,
+} from './repository.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -135,6 +142,21 @@ function createApp(config, pool) {
     if (runId === null) return;
     try {
       response.json(await listBoundaries(pool, config, runId, parseBoundaryParams(request.query)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/runs/:id/leaves', async (request, response, next) => {
+    const runId = parseRunId(request.params.id, response);
+    if (runId === null) return;
+    try {
+      response.json(
+        await listLeaves(pool, config, runId, {
+          page: request.query.page,
+          pageSize: request.query.pageSize,
+        }),
+      );
     } catch (error) {
       next(error);
     }

@@ -3,14 +3,19 @@
 A small web application to browse the `dml_utils_data` migration tables in a
 PostgreSQL database:
 
-- **Runs** — one row per migration run (`migration_run`), with its progress,
+- **Runs** — one row per migration run (`migration_run`), with its strategy
+  (`primary_key`, `ordered_key` or `blocks`), partition-wise flag, progress,
   cancellation, state, and per-chunk sleep throttle, filterable and sortable.
   Click a run to see its detail.
-- **Run detail** — the run's configuration (including its sleep throttle), the
-  migration SQL, its chunk boundaries (`migration_boundary`) and the failures
-  its chunks recorded (`migration_error`).
-- **Chunk detail** — one boundary, its start/end key, the run's sleep throttle,
-  and the `EXPLAIN` plan for the chunk. If the plan cannot be produced (for
+- **Run detail** — the run's configuration (including its sleep throttle and
+  ordered-key descriptor), the migration SQL, its chunk boundaries
+  (`migration_boundary`), the partition-wise leaf manifest
+  (`migration_run_leaf`) and the failures its chunks recorded
+  (`migration_error`).
+- **Chunk detail** — one boundary, its start/end key, its leaf (for a
+  partition-wise run), the run's sleep throttle, and the `EXPLAIN` plan for the
+  chunk. A partition-wise chunk is explained against its storage leaf, using the
+  leaf's matching ordered-key child index. If the plan cannot be produced (for
   example the driving table was dropped), the rest of the chunk page still
   renders.
 - **Errors** — every recorded chunk failure (`migration_error`), across runs.
@@ -39,7 +44,7 @@ database:
   passwordEnv: VIEWER_DB_PASSWORD # password is read from this env var, never the file
   ssl: false
 
-schema: dml_utils_data # holds migration_run, migration_boundary and migration_error
+schema: dml_utils_data # holds migration_run, migration_boundary, migration_run_leaf and migration_error
 
 server:
   host: 127.0.0.1
@@ -91,15 +96,16 @@ VIEWER_DB_PASSWORD=postgres npm test
 
 ## HTTP API
 
-| Method | Path                               | Description                                             |
-| ------ | ---------------------------------- | ------------------------------------------------------- |
-| GET    | `/api/config`                      | Display target and page-size settings (no credentials). |
-| GET    | `/api/runs`                        | Paginated migration runs.                               |
-| GET    | `/api/runs/:id`                    | One run and its counts.                                 |
-| GET    | `/api/runs/:id/boundaries`         | Paginated boundaries of a run.                          |
-| GET    | `/api/runs/:id/chunks/:boundaryNo` | One chunk, its next boundary, and its EXPLAIN plan.     |
-| GET    | `/api/runs/:id/errors`             | Errors recorded for a run.                              |
-| GET    | `/api/errors`                      | Paginated errors across runs.                           |
+| Method | Path                               | Description                                                   |
+| ------ | ---------------------------------- | ------------------------------------------------------------- |
+| GET    | `/api/config`                      | Display target and page-size settings (no credentials).       |
+| GET    | `/api/runs`                        | Paginated migration runs.                                     |
+| GET    | `/api/runs/:id`                    | One run and its counts.                                       |
+| GET    | `/api/runs/:id/boundaries`         | Paginated boundaries of a run.                                |
+| GET    | `/api/runs/:id/leaves`             | Paginated leaf manifest of a partition-wise run.              |
+| GET    | `/api/runs/:id/chunks/:boundaryNo` | One chunk, its next boundary, its leaf, and its EXPLAIN plan. |
+| GET    | `/api/runs/:id/errors`             | Errors recorded for a run.                                    |
+| GET    | `/api/errors`                      | Paginated errors across runs.                                 |
 
 ## Security notes
 
@@ -109,6 +115,8 @@ VIEWER_DB_PASSWORD=postgres npm test
   values are bound parameters.
 - The chunk plan is produced with `EXPLAIN` (without `ANALYZE`), so it plans the
   recorded SQL but does not execute it. Explain errors are returned as data on
-  the chunk response, not as a server error.
+  the chunk response, not as a server error. A partition-wise chunk is planned
+  against its leaf; an ordered-key leaf's child index is resolved read-only
+  through the catalog.
 - The server binds to `127.0.0.1` by default. Exposing it beyond localhost is at
   your own risk — there is no authentication.
